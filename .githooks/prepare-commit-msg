@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+[ -n "$2" ] && exit 0
+command -v bvr-ci >/dev/null 2>&1 || exit 0
+bvr-ci draft-commit-msg "$1" || true
+exit 0

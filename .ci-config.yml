@@ -1,0 +1,111 @@
+# .ci-config.yml — full reference. Copy into the project root and trim to what you need.
+#
+# The ONLY required key in this whole file is `project.name`. Every other section is optional;
+# where a key is shown below with a value, that value IS the built-in default — so copying a
+# section as-is and just deleting the comment changes nothing.
+#
+# Three kinds of settings live in three different places, and this file is only one of them:
+#   - repo policy      -> THIS file (.ci-config.yml), committed, same for every developer
+#   - per-developer     -> ~/.config/bvr-ci/config.yml, NOT committed, one machine's own settings
+#   - a secret's VALUE  -> never a file at all — only the NAME of an env var goes here or there;
+#                          you `export` the real value in your shell (or pull it from Passbolt)
+# `bvr-ci config` prints the fully resolved config and tells you which of the three each value
+# came from. See the README's "Configuration" section for the full per-key reference table.
+
+project:
+  name: circuless-node              # REQUIRED. Everything else in this file is optional.
+  language: python            # auto | python | node | java  (java auto-detects maven vs gradle;
+                             # "auto" sniffs pyproject.toml / package.json / pom.xml / build.gradle)
+
+# ---------------------------------------------------------------------------------------------
+# image: only needed if this project has a Dockerfile (or you use `snapshot`/`clean-snapshots`).
+# Omit the whole section for library mode — you still get version bump + git tag + GitHub release,
+# just no image build/push.
+# ---------------------------------------------------------------------------------------------
+image:
+  registry: reg.bavenir.eu/private   # <host>/<harbor-project> — required if this section is present
+  name: circuless-node                      # single-image mode; optional, defaults to project.name
+
+  # --- OR, instead of `name` above: a monorepo shipping SEVERAL images from ONE version/tag
+  # (a uv workspace, "Strategy B"). Delete `name` and uncomment this instead:
+  # targets:
+  #   - name: service1                       # required per target
+  #     dockerfile: services/service1/Dockerfile   # optional, defaults to "Dockerfile"
+  #     context: .                                 # optional, defaults to "."
+  #   - name: service2
+  #     dockerfile: services/service2/Dockerfile
+  #     context: .
+
+# ---------------------------------------------------------------------------------------------
+git:                       # optional — all keys have defaults
+  remote: origin           # remote to push commits/tags to
+  repo: bavenir/circuless-node      # optional owner/name; if set, preflight verifies the real remote matches
+                            # (guards against releasing from the wrong clone or a fork)
+
+# ---------------------------------------------------------------------------------------------
+# tests: local quality/security gates, run during release preflight — opt-OUT (default on).
+# A failing gate blocks the release. Run them standalone anytime with `bvr-ci run-tests`.
+# ---------------------------------------------------------------------------------------------
+tests:
+  runner: auto              # auto | native | docker
+                             #   auto   = use the installed binary if present, else run it in Docker
+                             #   native = require the binary (fails if missing, even with Docker present)
+                             #   docker = always use the container image, ignore any local install
+  secret_scan: true         # gitleaks — scan git history for committed secrets
+  trivy_scan: true          # trivy fs — vulnerabilities + misconfigurations (incl. Dockerfile) + secrets
+  trivy_scanners: vuln,misconfig,secret   # comma-separated subset trivy should run
+  trivy_severity: HIGH,CRITICAL           # comma-separated severities that fail the gate
+
+# ---------------------------------------------------------------------------------------------
+# signing: sign each pushed image's digest with Cosign. Opt-IN (default off) — read the
+# README's "Image signing" section (key generation, Passbolt storage, SECURITY.md) before
+# turning this on. The PRIVATE key never appears in this file — see the note below.
+# ---------------------------------------------------------------------------------------------
+signing:
+  enabled: true             # off by default
+  public_key: cosign.pub     # path to the PUBLIC key, committed to this repo — not a secret
+  password_env: COSIGN_PASSWORD   # NAME of the env var holding the private key's passphrase.
+                                    # Optional in practice: if it's not exported, bvr-ci prompts
+                                    # for the passphrase interactively at release time instead
+                                    # (releases are infrequent enough that this beats exporting it
+                                    # every session). Setting it is only worth it for a scripted /
+                                    # non-interactive release. The passphrase itself never goes in
+                                    # any file, prompted or not.
+  # There is no `key_path` here — the PRIVATE key's location is per-developer, not repo policy,
+  # so it can only be set in ~/.config/bvr-ci/config.yml (signing.key_path) or the
+  # $BVR_SIGNING_KEY_PATH env var. Putting it here would mean every developer's key lives at an
+  # identical path, which isn't realistic, and this file is committed — a path here would still
+  # be readable by anyone with repo access even though the key file itself is not.
+
+# ---------------------------------------------------------------------------------------------
+# llm: OPTIONAL assist for commit-message drafts and release notes. Deterministic checks
+# (commit format, branch naming) never depend on this — the LLM only assists, never blocks.
+# ---------------------------------------------------------------------------------------------
+llm:
+  enabled: true             # off by default — a team/security decision, always repo-only
+  # provider: claude_code             # http | claude_code — also settable per-developer, see below
+  # # base_url: https://api.mistral.ai/v1   # only used when provider: http; e.g. your LiteLLM gateway.
+  #                                         # repo-only (which endpoint calls are allowed is policy)
+  # model: sonnet   # provider: http default. For provider: claude_code, the default
+                                  # is "" (Claude Code's own default model) — set an alias here or
+                                  # per-developer instead, e.g. "sonnet" / "opus" / "haiku"
+  # api_key_env: MISTRAL_API_KEY   # NAME of the env var holding the API key — only used when
+                                   # provider: http. claude_code needs no key (uses whatever
+                                   # Claude Code auth is already set up on the machine).
+                                   # Never put the actual key value here — it would be committed.
+
+# ---------------------------------------------------------------------------------------------
+# Per-developer overrides (NOT this file): ~/.config/bvr-ci/config.yml
+# ($XDG_CONFIG_HOME/bvr-ci/config.yml if set) — not committed, one machine's own settings.
+# Only these exact keys are read from it; everything else in it is ignored with a warning.
+#
+#   llm:
+#     provider: claude_code      # overrides llm.provider above, this machine only
+#     model: sonnet               # overrides llm.model above, this machine only
+#     api_key_env: MY_KEY_VAR     # overrides llm.api_key_env above, this machine only
+#   signing:
+#     key_path: /Users/me/.cosign/bavenir-release.key   # the ONLY way to set this
+#
+# Precedence (highest wins): env var ($BVR_LLM_PROVIDER, $BVR_LLM_MODEL, $BVR_SIGNING_KEY_PATH)
+# > this per-developer file > this repo's .ci-config.yml > built-in default.
+# Run `bvr-ci config` to see exactly where each resolved value came from.

@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+if ! command -v bvr-ci >/dev/null 2>&1; then
+  echo "bvr-ci not found — install it (uv tool install ...) to work in this repo" >&2
+  exit 1
+fi
+branch=$(git symbolic-ref --short -q HEAD) || exit 0
+exec bvr-ci check-branch "$branch"

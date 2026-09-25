@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+if ! command -v bvr-ci >/dev/null 2>&1; then
+  echo "bvr-ci not found — install it (uv tool install ...) to work in this repo" >&2
+  exit 1
+fi
+status=0
+zero=0000000000000000000000000000000000000000
+while read local_ref local_sha remote_ref remote_sha; do
+  [ "$local_sha" = "$zero" ] && continue
+  case "$local_ref" in
+    refs/heads/*) bvr-ci check-branch "${local_ref#refs/heads/}" || status=1 ;;
+  esac
+done
+exit $status
