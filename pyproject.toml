@@ -1,0 +1,47 @@
+[project]
+name = "circuless-node"
+version = "0.1.0"
+description = "CIRCULess Node — the data plane. Holds organisations' resources and decides every access locally."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.12"
+
+# Deliberately short. Every entry earns its place; token handling (pyjwt, cryptography),
+# HTTP clients (httpx) and the admin UI (jinja) arrive with the components that need them.
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic-settings>=2.6",
+    "sqlmodel>=0.0.22",
+    "alembic>=1.14",
+    "fsspec>=2024.10",
+]
+
+[project.scripts]
+circuless-node = "circuless_node.__main__:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.8",
+    "httpx2>=2.13.1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/circuless_node"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "PTH"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

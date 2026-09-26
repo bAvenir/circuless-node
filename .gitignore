@@ -12,3 +12,6 @@ venv/
 .ruff_cache/
 cosign.key
 *.cosign.key
+
+# Node data: database, WAL files and resource content.
+data/

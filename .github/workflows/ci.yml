@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: ['*']
+  pull_request:
+    branches: [main]
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Set up Python
+        run: uv python install
+
+      - name: Install dependencies
+        run: uv sync --all-groups
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Check formatting
+        run: uv run ruff format --check .
+
+      # Includes the structural checks that cannot be retrofitted: every public route under
+      # /v1, and no internal path or schema on the gateway-facing app (D24, R8).
+      - name: Tests
+        run: uv run pytest -q
+
+      # A migration that cannot be applied to an empty database is not a migration. The
+      # route-auth test (H1) joins this workflow with the test harness in the next branch.
+      - name: Migrations apply from scratch
+        env:
+          CIRCULESS_NODE_NODE_ID: ci
+          CIRCULESS_NODE_DATABASE_URL: sqlite:///./ci.db
+        run: |
+          uv run alembic upgrade head
+          uv run alembic downgrade base
