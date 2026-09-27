@@ -9,23 +9,24 @@ client and every test at once.
 from __future__ import annotations
 
 import pytest
-from fastapi.routing import APIRoute
 from starlette.testclient import TestClient
 
 from circuless_node.app import API_PREFIX, create_internal_app, create_public_app
 from circuless_node.settings import Settings
+
+from .harness.routes import route_paths, route_table
 
 # Paths the design allows outside /v1 (CLAUDE.md invariant 1). All of them live on the
 # internal application; none is reachable through the gateway.
 INTERNAL_PATHS = {"/healthz", "/metrics", "/internal/authz"}
 
 
-def public_routes(settings: Settings) -> list[APIRoute]:
-    return [r for r in create_public_app(settings).routes if isinstance(r, APIRoute)]
-
-
 def test_every_public_route_is_under_v1(settings: Settings) -> None:
-    offenders = [r.path for r in public_routes(settings) if not r.path.startswith(API_PREFIX)]
+    routes = route_table(create_public_app(settings))
+    assert routes, (
+        "nothing to check — see test_route_auth.test_the_public_app_serves_at_least_one_route"
+    )
+    offenders = [path for _, path in routes if not path.startswith(API_PREFIX)]
     assert offenders == [], (
         f"routes outside {API_PREFIX}: {offenders}. Every Node API route carries the prefix "
         "(D24); the only exceptions are /.well-known/circuless-node and the internal app."
@@ -34,8 +35,7 @@ def test_every_public_route_is_under_v1(settings: Settings) -> None:
 
 def test_public_app_exposes_no_internal_paths(settings: Settings) -> None:
     """The gateway can reach this app, so an authorization oracle here would be public (R8)."""
-    paths = {r.path for r in public_routes(settings)}
-    assert not (paths & INTERNAL_PATHS)
+    assert not (route_paths(create_public_app(settings)) & INTERNAL_PATHS)
 
 
 def test_public_app_publishes_no_schema(settings: Settings) -> None:

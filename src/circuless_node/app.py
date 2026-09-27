@@ -19,9 +19,10 @@ public app mounts one router, which carries the prefix — and asserted by a tes
 
 from __future__ import annotations
 
-from fastapi import APIRouter, FastAPI, Response
+from fastapi import APIRouter, Depends, FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 
+from .auth import TokenVerifier, VerifiedToken, require_token
 from .db import create_db_engine
 from .errors import install_error_handlers
 from .settings import Settings, get_settings
@@ -34,6 +35,7 @@ def _attach_resources(app: FastAPI, settings: Settings) -> None:
     app.state.settings = settings
     app.state.engine = create_db_engine(settings)
     app.state.storage = Storage(settings)
+    app.state.verifier = TokenVerifier(settings)
 
 
 def create_public_app(settings: Settings | None = None) -> FastAPI:
@@ -70,10 +72,37 @@ def create_public_app(settings: Settings | None = None) -> FastAPI:
 def v1_router() -> APIRouter:
     """The only router on the public app.
 
-    Empty at N1. Resources (N5), data (N8, N19) and invoke (N9) mount here, and each
-    inherits the `/v1` prefix by construction rather than by remembering it.
+    Resources (N5), data (N8, N19) and invoke (N9) mount here, and each inherits the `/v1`
+    prefix by construction rather than by remembering it.
     """
-    return APIRouter(prefix=API_PREFIX)
+    router = APIRouter(prefix=API_PREFIX)
+
+    @router.get("/whoami")
+    def whoami(token: VerifiedToken = Depends(require_token)) -> dict:
+        """What this node makes of your token.
+
+        Useful in three places: it is the M1 demo — a node accepting a user token,
+        refusing a node token, refusing a token meant for another node; it gives someone
+        installing a node from the guide a way to confirm it reads their tokens correctly;
+        and it is how the route-auth test gets something real to check.
+
+        It echoes only claims the caller already holds, so it discloses nothing they did
+        not bring with them.
+
+        N2 returns the verified claims. N3 replaces this with the resolved subject —
+        organisations, admin-of, acting org — which is the shape `decide()` consumes.
+        """
+        return {
+            "sub": token.sub,
+            "principal_type": token.principal_type,
+            "actor": token.actor,
+            "groups": token.groups,
+            "org_id": token.org_id,
+            "node_id": token.node_id,
+            "audience": token.claims.get("aud"),
+        }
+
+    return router
 
 
 def create_internal_app(settings: Settings | None = None) -> FastAPI:

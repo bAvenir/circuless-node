@@ -16,6 +16,7 @@ dependencies = [
     "alembic>=1.14",
     "fsspec>=2024.10",
     "pyjwt[crypto]>=2.10",
+    "httpx>=0.28",
 ]
 
 [project.scripts]
@@ -42,6 +43,11 @@ src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "PTH"]
+
+[tool.ruff.lint.flake8-bugbear]
+# Depends() in an argument default is how FastAPI declares a dependency. B008 is aimed at
+# mutable defaults evaluated once at import, which this is not.
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Path", "fastapi.Header"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

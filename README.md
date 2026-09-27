@@ -50,6 +50,51 @@ sides meet at a written contract instead: `tests/realm/CONTRACT.md` states exact
 claims the node depends on, the cloud's `kc.py verify` asserts the realm emits them, and
 this suite asserts the node consumes them. **Change one side, change the other.**
 
+## Every route needs a token
+
+`/v1/whoami` is the only route so far. It reports what the node makes of your token, which
+is the M1 demo, a way for someone installing a node to confirm it reads their tokens, and
+the thing that gives the route-auth test something real to check. It echoes only claims the
+caller already holds.
+
+```sh
+curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8000/v1/whoami
+```
+
+Verification runs offline — the node never calls the Cloud on the request path (§3.7) — in
+this order:
+
+| | Check | Failure |
+|---|---|---|
+| 1 | signature, against the cached JWKS | 401 |
+| 2 | `iss` matches the configured issuer | 401 |
+| 3 | `aud` is **exactly** `node:{node_id}` | 401 |
+| 4 | `exp`/`nbf`, 60 s leeway for clock drift | 401 |
+| 5 | `principal_type` is not `node` | **403** `node_principal_not_permitted` |
+
+Steps 1–4 ask "is this real and meant for me". Step 5 asks "may this principal speak here
+at all" — the token is genuine, the caller simply is not permitted, so 403 rather than 401.
+
+Three details that are easy to get wrong:
+
+**`aud` must be this node's audience and no other.** PyJWT is satisfied when the expected
+audience appears *among* several, which is right for OAuth generally and wrong here: a
+token naming two nodes is replayable between them (§5.4).
+
+**A missing `principal_type` is refused, not treated as `user`.** Keycloak's User Profile
+cannot default an attribute, so the claim can genuinely be absent — and reading that as
+`user` would let a node principal whose attribute was never set pass the check meant to
+reject it.
+
+**Only asymmetric algorithms are accepted.** Allowing HMAC is the classic confusion attack:
+the public key everyone can read becomes the secret an attacker signs with.
+
+The JWKS cache refetches **once** on an unknown `kid`, throttled to one fetch a minute —
+without that, a key rotation rejects every token until someone restarts the node, and with
+it unthrottled an invented `kid` becomes a way to make the node hammer Keycloak. Stale keys
+beat no keys when Keycloak is unreachable (F16); the cache is in memory only, because an
+outage longer than the 5-minute token lifetime stops consumption anyway (§3.7).
+
 ## Two sockets, not one
 
 The node serves two applications on separate ports, and which port something is on *is* the
@@ -114,10 +159,9 @@ so a wildcard would let any site spend a user's node token.
 
 ## State of the build
 
-Built: **N1** skeleton, **N14** storage, **H3**'s `/v1` prefix, **Q1** test harness.
-Next: token verification (N2), the subject resolver (N3), tenancy (N4) and node
+Built: **N1** skeleton, **N14** storage, **H3**'s `/v1` prefix, **Q1** test harness,
+**N2** token verification. Next: the subject resolver (N3), tenancy (N4) and node
 self-authentication (N17).
 
-There are no `/v1` routes yet, so the route-auth test skips rather than passing vacuously.
-That is expected — the prefix and the interface split had to be settled before any route
-existed, which is the whole reason they come first.
+`/v1/whoami` currently returns verified *claims*. N3 replaces that with the resolved
+subject — organisations, admin-of, acting org — which is the shape `decide()` consumes.
