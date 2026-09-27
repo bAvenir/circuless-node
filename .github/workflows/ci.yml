@@ -27,13 +27,23 @@ jobs:
       - name: Check formatting
         run: uv run ruff format --check .
 
-      # Includes the structural checks that cannot be retrofitted: every public route under
-      # /v1, and no internal path or schema on the gateway-facing app (D24, R8).
+      # Pulled explicitly so a registry problem reads as a registry problem, rather than
+      # as a mysterious test timeout while the harness waits for a container.
+      - name: Pull Keycloak
+        run: docker compose -f tests/compose/docker-compose.yml pull --quiet
+
+      # The suite starts its own Keycloak and builds the fixture realm; integration tests
+      # run against a real issuer, never a mocked one. Also covers the structural checks
+      # that cannot be retrofitted: every public route under /v1, no internal path or
+      # schema on the gateway-facing app (D24, R8), and the route-auth test (H1).
       - name: Tests
         run: uv run pytest -q
 
-      # A migration that cannot be applied to an empty database is not a migration. The
-      # route-auth test (H1) joins this workflow with the test harness in the next branch.
+      - name: Keycloak logs on failure
+        if: failure()
+        run: docker compose -f tests/compose/docker-compose.yml logs --tail 50
+
+      # A migration that cannot be applied to an empty database is not a migration.
       - name: Migrations apply from scratch
         env:
           CIRCULESS_NODE_NODE_ID: ci

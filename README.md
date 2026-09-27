@@ -18,9 +18,37 @@ uv run circuless-node
 ```
 
 ```sh
-uv run pytest        # tests
+uv run pytest        # tests — starts a Keycloak if one is not already running
 uv run ruff check .  # lint
 ```
+
+## Tests run against a real Keycloak
+
+Never a mocked issuer. The node's whole job is deciding what a token means, and a fake
+issuer would agree with whatever the node believed.
+
+The suite starts its own Keycloak on `127.0.0.1:8090` and builds a fixture realm through
+the Admin API. **If one is already running it is reused**, which is the difference between
+a 26-second run and a 4-second one — worth knowing, because this suite grows for the rest
+of the project:
+
+```sh
+docker compose -f tests/compose/docker-compose.yml up -d     # leave it up
+docker compose -f tests/compose/docker-compose.yml down -v   # start clean
+```
+
+Point the tests elsewhere with `CIRCULESS_TEST_KEYCLOAK_URL`.
+
+**User tokens come from the authorization-code flow**, driven end to end with PKCE — not
+the password grant, which H2 disables on every client (SR-1.1.4). Service and node
+principals use `private_key_jwt`, which H2 does not affect.
+
+`tests/realm/` is a **fixture, not a copy of the production realm**, which lives in the
+private `circuless-cloud` repository. This repository is public, so coupling its CI to a
+private one would mean a secret in public settings and broken CI on every fork PR. The two
+sides meet at a written contract instead: `tests/realm/CONTRACT.md` states exactly which
+claims the node depends on, the cloud's `kc.py verify` asserts the realm emits them, and
+this suite asserts the node consumes them. **Change one side, change the other.**
 
 ## Two sockets, not one
 
@@ -86,9 +114,10 @@ so a wildcard would let any site spend a user's node token.
 
 ## State of the build
 
-Built: **N1** skeleton, **N14** storage, **H3**'s `/v1` prefix. Next: the test harness
-against a real Keycloak (Q1), then token verification (N2), the subject resolver (N3),
-tenancy (N4) and node self-authentication (N17).
+Built: **N1** skeleton, **N14** storage, **H3**'s `/v1` prefix, **Q1** test harness.
+Next: token verification (N2), the subject resolver (N3), tenancy (N4) and node
+self-authentication (N17).
 
-There are no `/v1` routes yet. That is expected — the prefix and the interface split had to
-be settled before any route existed, which is the whole reason they come first.
+There are no `/v1` routes yet, so the route-auth test skips rather than passing vacuously.
+That is expected — the prefix and the interface split had to be settled before any route
+existed, which is the whole reason they come first.

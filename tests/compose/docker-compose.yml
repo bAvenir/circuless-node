@@ -1,0 +1,34 @@
+# Keycloak for the node's integration tests.
+#
+# Deliberately not the Cloud's stack: no Postgres, no realm import, dev mode. Tests need a
+# real issuer that starts fast and can be thrown away, not a faithful deployment. The realm
+# is built through the Admin API by tests/harness/keycloak.py.
+#
+# Port 8090 so it never collides with a Cloud stack on 8080, and loopback only.
+name: circuless-node-tests
+
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.7.4@sha256:82a77884f3af238beab1e7afd63b5f530e1b5c0590bd7aa60b40a40463e29b2c
+    command: ["start-dev"]
+    environment:
+      # Throwaway container on loopback, so plain env credentials are fine here. The Cloud
+      # stack reads its admin password from a file; this one has nothing to protect.
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KC_HEALTH_ENABLED: "true"
+    ports:
+      - "127.0.0.1:8090:8080"
+    healthcheck:
+      test:
+        - CMD
+        - bash
+        - -c
+        - >-
+          exec 3<>/dev/tcp/127.0.0.1/9000 &&
+          printf 'GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 &&
+          grep -q '"status": "UP"' <&3
+      interval: 5s
+      timeout: 5s
+      retries: 40
+      start_period: 20s

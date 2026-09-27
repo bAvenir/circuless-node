@@ -1,0 +1,76 @@
+{
+  "_comment": [
+    "Minimal realm for the node's integration tests. A fixture, not a copy of the",
+    "production realm — see CONTRACT.md for what it is guaranteeing and why the node does",
+    "not read the real one.",
+    "",
+    "Applied through the Admin API by tests/harness/keycloak.py, not by Keycloak's realm",
+    "import. Import treats every list-shaped collection as a whole-realm snapshot: declaring",
+    "one client scope removes the fourteen built-in ones, and declaring one role strips",
+    "account access from default-roles. Applying object by object avoids all of that."
+  ],
+
+  "realm": "circuless-test",
+  "nodeId": "test-node",
+
+  "groups": ["/orgs/alpha", "/orgs/alpha/admins", "/orgs/beta", "/orgs/beta/admins"],
+
+  "userProfileAttributes": ["org_id", "principal_type", "node_id"],
+
+  "identityScope": {
+    "name": "circuless-identity",
+    "mappers": [
+      { "claim": "groups", "type": "group-membership" },
+      { "claim": "org_id", "type": "user-attribute" },
+      { "claim": "principal_type", "type": "user-attribute" },
+      { "claim": "node_id", "type": "user-attribute" }
+    ]
+  },
+
+  "audienceScopes": [
+    { "name": "node:test-node", "audience": "node:test-node" },
+    { "// node:other-node": "So a token for a DIFFERENT node can be minted, which N2 must reject.",
+      "name": "node:other-node", "audience": "node:other-node" }
+  ],
+
+  "clients": [
+    {
+      "clientId": "test-ui",
+      "// role": "The browser client. Auth Code + PKCE, because H2 disables the password grant everywhere and the harness drives the real login flow.",
+      "public": true,
+      "redirectUris": ["http://localhost:9999/callback"],
+      "defaultScopes": ["basic", "circuless-identity"],
+      "optionalScopes": ["profile", "email", "node:test-node", "node:other-node"]
+    },
+    {
+      "clientId": "test-service",
+      "// role": "A service principal of /orgs/alpha. private_key_jwt, unaffected by H2.",
+      "public": false,
+      "serviceAccountAttributes": { "principal_type": "service", "org_id": "alpha" },
+      "defaultScopes": ["basic", "circuless-identity"],
+      "optionalScopes": ["node:test-node", "node:other-node"]
+    },
+    {
+      "clientId": "test-node-principal",
+      "// role": "A node principal. Exists so the suite can present the token N2 must refuse with node_principal_not_permitted (D14). Given node audiences on purpose — the production realm withholds them, and the node must refuse the token on principal_type regardless.",
+      "public": false,
+      "serviceAccountAttributes": { "principal_type": "node", "node_id": "test-node" },
+      "defaultScopes": ["basic", "circuless-identity"],
+      "optionalScopes": ["node:test-node", "node:other-node"]
+    }
+  ],
+
+  "users": [
+    { "username": "alpha.user", "groups": ["/orgs/alpha"], "principal_type": "user" },
+    { "username": "alpha.admin", "groups": ["/orgs/alpha", "/orgs/alpha/admins"],
+      "principal_type": "user" },
+    { "username": "beta.user", "groups": ["/orgs/beta"], "principal_type": "user" },
+    { "// consultant": "Member of both organisations, for acting-org resolution (R11).",
+      "username": "consultant", "groups": ["/orgs/alpha", "/orgs/beta"],
+      "principal_type": "user" },
+    { "// stranger": "No organisation at all — a self-registered user nobody has admitted yet.",
+      "username": "stranger", "groups": [], "principal_type": "user" },
+    { "// no.principal.type": "principal_type deliberately unset. The node must fail closed on this, not assume 'user' (CONTRACT.md property 5).",
+      "username": "no.principal.type", "groups": ["/orgs/alpha"], "principal_type": null }
+  ]
+}
