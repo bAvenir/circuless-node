@@ -26,6 +26,8 @@ import time
 import httpx
 import jwt
 
+from .oidc import discover
+
 
 class SigningKeyUnavailableError(Exception):
     """No key for this `kid`, and refetching did not produce one."""
@@ -97,15 +99,7 @@ class JwksCache:
     def _resolve_jwks_uri(self) -> str:
         if self._jwks_uri:
             return self._jwks_uri
-        with httpx.Client(timeout=self._timeout) as client:
-            discovery = (
-                client.get(f"{self._issuer}/.well-known/openid-configuration")
-                .raise_for_status()
-                .json()
-            )
-        # Discovery rather than a hardcoded Keycloak path: the issuer is configuration, and
-        # this is the one call that tells us we are talking to the realm we think we are.
-        self._jwks_uri = discovery["jwks_uri"]
+        self._jwks_uri = discover(self._issuer, self._timeout)["jwks_uri"]
         return self._jwks_uri
 
     def warm(self) -> None:

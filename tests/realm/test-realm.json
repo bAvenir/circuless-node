@@ -29,6 +29,8 @@
   },
 
   "audienceScopes": [
+    { "// circuless-cloud": "The Cloud API's audience. A node client gets it as a DEFAULT scope, because talking to the Cloud API is the only thing a node token is for (N17).",
+      "name": "circuless-cloud", "audience": "circuless-cloud" },
     { "name": "node:test-node", "audience": "node:test-node" },
     { "// node:other-node": "So a token for a DIFFERENT node can be minted, which N2 must reject.",
       "name": "node:other-node", "audience": "node:other-node" }
@@ -56,8 +58,17 @@
       "// role": "A node principal. Exists so the suite can present the token N2 must refuse with node_principal_not_permitted (D14). Given node audiences on purpose — the production realm withholds them, and the node must refuse the token on principal_type regardless.",
       "public": false,
       "serviceAccountAttributes": { "principal_type": "node", "node_id": "test-node" },
+      "// scopes": "circuless-cloud is OPTIONAL, not default. As a default it would ride along on every node token, so a node token that also named a node audience would carry two - and be refused on audience (401) before D14 could refuse it on principal type (403). One audience per token applies to nodes too.",
       "defaultScopes": ["basic", "circuless-identity"],
-      "optionalScopes": ["node:test-node", "node:other-node"]
+      "optionalScopes": ["circuless-cloud", "node:test-node", "node:other-node"]
+    },
+    {
+      "clientId": "test-node-enrolling",
+      "// role": "A second node client, for N17. Enrollment replaces the registered certificate, so it must not happen on test-node-principal: that one is shared by every test that needs a node token, and swapping its certificate breaks them all. Found the hard way.",
+      "public": false,
+      "serviceAccountAttributes": { "principal_type": "node", "node_id": "test-node" },
+      "defaultScopes": ["basic", "circuless-identity"],
+      "optionalScopes": ["circuless-cloud"]
     }
   ],
 

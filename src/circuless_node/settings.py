@@ -5,7 +5,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -27,6 +27,10 @@ class Settings(BaseSettings):
         description="Keycloak realm URL. Its JWKS is the only signature authority.",
     )
     cloud_api_url: str = Field(default="http://127.0.0.1:8081")
+    node_client_id: str = Field(
+        default="",
+        description="Keycloak client this node authenticates as. Defaults to node-<node_id>.",
+    )
 
     # --- storage ----------------------------------------------------------------------
     database_url: str = Field(
@@ -70,6 +74,14 @@ class Settings(BaseSettings):
     @classmethod
     def strip_trailing_slash(cls, value: str) -> str:
         return value.rstrip("/")
+
+    @model_validator(mode="after")
+    def default_client_id_from_node_id(self) -> Settings:
+        # Derived rather than required: the two are the same thing in every deployment so
+        # far, and one fewer value to get wrong on an install is worth the indirection.
+        if not self.node_client_id:
+            object.__setattr__(self, "node_client_id", f"node-{self.node_id}")
+        return self
 
     @property
     def audience(self) -> str:

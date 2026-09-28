@@ -1,27 +1,31 @@
-"""Entrypoint. Runs the public and internal applications on their own sockets.
+"""Entrypoint.
 
-    circuless-node
-    uvx circuless-node==<version>
+    circuless-node                 run the node
+    circuless-node certificate     print this node's certificate, for registration
+    circuless-node check           confirm the node can authenticate to the Cloud
 
-Both servers run in one process and one event loop; if either stops, the process stops,
-because a node serving data with no health endpoint — or a health endpoint with no node —
-is worse than a node that is plainly down.
+Installed as `uvx circuless-node==<version>`, always pinned.
 """
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import sys
 
 import uvicorn
 
 from .app import create_internal_app, create_public_app
-from .settings import get_settings
+from .identity import (
+    CloudAuthenticationError,
+    CloudCredentials,
+    KeyPermissionsError,
+    load_or_create_keypair,
+)
+from .settings import Settings, get_settings
 
 
-async def _serve() -> None:
-    settings = get_settings()
-
+async def _serve(settings: Settings) -> None:
     public = uvicorn.Server(
         uvicorn.Config(
             create_public_app(settings),
@@ -48,15 +52,77 @@ async def _serve() -> None:
         f"internal on {settings.internal_host}:{settings.internal_port}",
         flush=True,
     )
+    # Both servers share one process and one event loop; if either stops, the process
+    # stops. A node serving data with no health endpoint — or a health endpoint with no
+    # node — is worse than a node that is plainly down.
     await asyncio.gather(public.serve(), internal.serve())
 
 
-def main() -> int:
+def _serve_command(settings: Settings) -> int:
+    # Generated on first start, so a fresh install has an identity before it has a
+    # request to answer — and so the operator has a certificate to register.
+    keypair = load_or_create_keypair(settings)
+    print(f"node certificate: {keypair.certificate_path} ({keypair.fingerprint[:16]}…)")
     try:
-        asyncio.run(_serve())
+        asyncio.run(_serve(settings))
     except KeyboardInterrupt:
         return 0
     return 0
+
+
+def _certificate_command(settings: Settings) -> int:
+    """Print the certificate an operator registers against this node's Keycloak client.
+
+    Enrollment is manual in the beta (§3.6). Printing the certificate — rather than
+    asking someone to find a file — is the difference between a documented step and a
+    step people improvise.
+    """
+    keypair = load_or_create_keypair(settings)
+    print(keypair.certificate_pem(), end="")
+    print(f"# client_id:   {settings.node_client_id}", file=sys.stderr)
+    print(f"# fingerprint: {keypair.fingerprint}", file=sys.stderr)
+    print(f"# private key: {keypair.key_path} (stays here, always)", file=sys.stderr)
+    return 0
+
+
+def _check_command(settings: Settings) -> int:
+    """Confirm the node can actually authenticate — the M1 exit criterion, on demand."""
+    keypair = load_or_create_keypair(settings)
+    CloudCredentials(settings, keypair).token()
+    print(f"OK: {settings.node_client_id} obtained a circuless-cloud token")
+    return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        prog="circuless-node",
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "command",
+        nargs="?",
+        default="serve",
+        choices=["serve", "certificate", "check"],
+    )
+    args = parser.parse_args()
+    settings = get_settings()
+
+    command = {
+        "serve": _serve_command,
+        "certificate": _certificate_command,
+        "check": _check_command,
+    }[args.command]
+
+    try:
+        return command(settings)
+    except (KeyPermissionsError, CloudAuthenticationError) as failure:
+        # Both of these are conditions we anticipated and have advice for — a loosened key
+        # file, a certificate nobody registered yet. Handing an operator a stack trace for
+        # something we can name and tell them how to fix is a poor way to meet them on
+        # what is usually their first install.
+        print(f"{args.command} failed: {failure}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

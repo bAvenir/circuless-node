@@ -131,6 +131,42 @@ than an error, because they would never find out.
 
 Auditors ask on whose behalf a consultant read a file. This is the answer, and N11 logs it.
 
+## The node's own identity
+
+A node authenticates to the Cloud API as **infrastructure** — a `node_id`, no
+organisation — and its tokens are refused at every consumption endpoint (D14). It can push
+its catalogue, pull agreements and heartbeat, and nothing else.
+
+It uses **`private_key_jwt`** (D18), so no secret is ever sent to anyone. The keypair is
+generated on first start and only the public half, in a self-signed X.509 certificate
+(D26), is registered with Keycloak. Nothing to put in a handover email, in git, or in the
+realm export.
+
+Enrollment is manual in the beta (§3.6):
+
+```sh
+circuless-node certificate    # print it; an operator registers it on the node's client
+circuless-node check          # confirm the node can obtain a circuless-cloud token
+```
+
+`check` is M1's exit criterion on demand, and it is the first thing to run on an install
+that is not working. Before the certificate is registered it says exactly that rather than
+leaving someone reading Keycloak logs.
+
+The private key is written `0600` at creation, not chmod-ed afterwards, so it is never
+briefly world-readable. **The node refuses to start on a key anyone else can read** —
+fixing it silently would hide that something loosened it, and on a shared host the key may
+already have been copied.
+
+A node token asks for `scope=circuless-cloud` rather than being given that audience by
+default. One audience per token (§5.4) applies to nodes too: as a default it would ride
+along on every node token, and one that also named a node audience would carry two.
+
+Losing the private key means generating a new one and re-registering it; losing the Fernet
+key (N10) means re-entering upstream credentials. Both are documented rather than
+engineered around (G11), and both belong in a key backup kept separate from the data
+backup.
+
 ## One process, several organisations
 
 Every tenant-owned query is filtered once, centrally, by a session-level
@@ -202,6 +238,8 @@ src/circuless_node/
     settings.py   configuration; refuses a wildcard CORS origin
     models.py     tenant-owned vs node-global tables (R10)
     tenancy.py    the central tenant filter, and the scopes that drive it
+    identity.py   the node's keypair, certificate and Cloud credentials
+    oidc.py       discovery, shared by the JWKS cache and the credentials
     db.py         engine; SQLite in WAL mode
     storage.py    fsspec adapter, and path confinement
     errors.py     reason codes — one enum, no free text
@@ -233,8 +271,8 @@ so a wildcard would let any site spend a user's node token.
 ## State of the build
 
 Built: **N1** skeleton, **N14** storage, **H3**'s `/v1` prefix, **Q1** test harness,
-**N2** token verification, **N3** subject resolver, **N4** tenancy. Next: node
-self-authentication (N17), the last node item in M1.
+**N2** token verification, **N3** subject resolver, **N4** tenancy, **N17** node
+self-authentication. **That completes the node's M1 scope.**
 
 `/v1/whoami` returns the resolved subject — organisations, admin-of, acting org — which is
 the shape `decide()` will consume. `resolve_acting_org` takes the candidate organisations

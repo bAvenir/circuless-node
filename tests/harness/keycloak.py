@@ -407,6 +407,28 @@ class FixtureRealm:
                     f"/admin/realms/{self.name}/users/{user_id}/groups/{self._group_id(path)}"
                 )
 
+    def register_certificate(self, client_id: str, certificate_pem: str) -> None:
+        """Register a certificate generated elsewhere — by the node itself, in N17's tests.
+
+        This is the manual enrollment step of §3.6: the node produces a certificate, an
+        operator puts it on the client. Doing it this way round is the point; a harness
+        that generated the key would be testing its own crypto rather than the node's.
+        """
+        certificate = x509.load_pem_x509_certificate(certificate_pem.encode())
+        der = base64.b64encode(certificate.public_bytes(serialization.Encoding.DER)).decode()
+        client = self.admin.get(f"/admin/realms/{self.name}/clients?clientId={client_id}")[0]
+        self.admin.put(
+            f"/admin/realms/{self.name}/clients/{client['id']}",
+            {
+                **client,
+                "attributes": {
+                    **client.get("attributes", {}),
+                    "jwt.credential.certificate": der,
+                    "use.jwks.url": "false",
+                },
+            },
+        )
+
     def user_id(self, username: str) -> str:
         """Keycloak's id for a fixture user — the `sub` its tokens carry."""
         found = self.admin.get(f"/admin/realms/{self.name}/users?username={username}&exact=true")

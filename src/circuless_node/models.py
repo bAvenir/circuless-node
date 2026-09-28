@@ -38,6 +38,26 @@ class TenantOwned(SQLModel):
     tenant_id: uuid.UUID = Field(foreign_key="tenant.id", index=True)
 
 
+class NodeIdentity(SQLModel, table=True):
+    """What this node knows about its own credentials (N17).
+
+    Node-global: it is about the node, not about any organisation, so the tenancy filter
+    must never touch it (R10).
+
+    The private key is a file, not a row — it never goes near the database. What is
+    recorded here is which certificate is in use and since when, so an operator can ask
+    "is the certificate Keycloak holds the one this node is signing with?" and check a
+    fingerprint rather than handle a key. Rotation will extend this with the retired
+    fingerprint and a retire-after time.
+    """
+
+    id: uuid.UUID = Field(default_factory=_uuid, primary_key=True)
+    node_id: str = Field(index=True, unique=True)
+    client_id: str
+    certificate_fingerprint: str
+    created_at: datetime = Field(default_factory=_now)
+
+
 class Tenant(SQLModel, table=True):
     """An organisation hosted on this node.
 
