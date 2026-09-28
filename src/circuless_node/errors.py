@@ -18,7 +18,7 @@ from fastapi.responses import JSONResponse
 
 class Reason(StrEnum):
     # Identity and token handling (N2, N3)
-    INVALID_TOKEN = "invalid_token"
+    INVALID_TOKEN = "invalid_token"  # nosec B105 — a reason code, not a credential
     NODE_PRINCIPAL_NOT_PERMITTED = "node_principal_not_permitted"
     AMBIGUOUS_ACTING_ORG = "ambiguous_acting_org"
 

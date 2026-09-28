@@ -51,3 +51,68 @@ jobs:
         run: |
           uv run alembic upgrade head
           uv run alembic downgrade base
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Gitleaks scans history, and a secret-scanning gate that only sees the tip
+          # commit is worth very little: a secret committed and later removed is still a
+          # secret, and the remedy is rotation, not a revert.
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Gitleaks
+        run: |
+          docker run --rm -v "$PWD:/repo" \
+            zricethezav/gitleaks:latest detect --source=/repo --no-banner --redact --verbose
+
+      # `src` only. Tests are full of asserts and subprocess calls, which is what tests
+      # are made of; scanning them produces noise that trains people to ignore the gate.
+      #
+      # No severity threshold: every finding fails. The legitimate ones carry an inline
+      # `# nosec` with the reason, so each suppression is a decision on the record rather
+      # than a rule switched off across the repository.
+      - name: Bandit
+        run: uvx bandit -q -r src
+
+      - name: Semgrep
+        run: |
+          uvx --from semgrep semgrep --config p/python --config p/secrets \
+            --error --quiet src tests
+
+      - name: Lockfile is in sync with pyproject.toml
+        run: uv lock --check
+
+      - name: Trivy — vulnerabilities, misconfiguration and secrets
+        run: |
+          docker run --rm -v "$PWD:/repo" -v trivy-cache:/root/.cache \
+            aquasec/trivy:latest fs --scanners vuln,misconfig,secret \
+            --severity HIGH,CRITICAL --exit-code 1 --no-progress /repo
+
+      - name: SBOM
+        run: |
+          docker run --rm -v "$PWD:/repo" anchore/syft:latest \
+            /repo -o cyclonedx-json > sbom.cyclonedx.json
+
+      # CI logs expire; the evidence pack for the security validation does not. Each
+      # release needs its SBOM retrievable months later (build breakdown H1).
+      - name: Keep the SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.cyclonedx.json
+          retention-days: 90
+
+      # A script rather than a grep: a Compose service with a `build:` section has no
+      # registry digest to pin, and `FROM builder AS final` names a stage, not an image.
+      - name: Container images are pinned by digest
+        run: uv run --quiet .github/check-image-pinning.py
+
+      # Printed, not filed away. A deferral nobody sees is indistinguishable from an
+      # oversight by the time an auditor asks.
+      - name: Deferred security controls
+        run: cat SECURITY-DEFERRALS.md

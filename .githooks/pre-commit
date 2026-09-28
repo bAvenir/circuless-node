@@ -1,7 +1,36 @@
 #!/usr/bin/env bash
+# Branch name, then staged secrets. H1 wants gitleaks in pre-commit as well as in CI:
+# CI catches a secret after it is in the history, where the remedy is rotation rather
+# than a revert. Here it is still just an edit.
+set -uo pipefail
+
 if ! command -v bvr-ci >/dev/null 2>&1; then
   echo "bvr-ci not found — install it (uv tool install ...) to work in this repo" >&2
   exit 1
 fi
+
 branch=$(git symbolic-ref --short -q HEAD) || exit 0
-exec bvr-ci check-branch "$branch"
+bvr-ci check-branch "$branch" || exit 1
+
+# `protect --staged` scans what is about to be committed, not the whole history — which
+# keeps the hook fast enough that nobody reaches for --no-verify.
+if command -v gitleaks >/dev/null 2>&1; then
+  gitleaks protect --staged --no-banner --redact || {
+    echo "gitleaks found a secret in the staged changes. Remove it before committing." >&2
+    exit 1
+  }
+elif command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+  git diff --cached > /tmp/circuless-staged.patch
+  docker run --rm -i zricethezav/gitleaks:latest \
+      detect --pipe --no-banner --redact < /tmp/circuless-staged.patch || {
+    rm -f /tmp/circuless-staged.patch
+    echo "gitleaks found a secret in the staged changes. Remove it before committing." >&2
+    exit 1
+  }
+  rm -f /tmp/circuless-staged.patch
+else
+  # Not silently skipped: a gate that quietly does nothing is worse than no gate,
+  # because people stop thinking about it. CI still scans the full history.
+  echo "WARNING: neither gitleaks nor Docker is available — staged changes were NOT" >&2
+  echo "         scanned for secrets. CI will still scan the full history." >&2
+fi

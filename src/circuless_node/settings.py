@@ -47,7 +47,13 @@ class Settings(BaseSettings):
     # reachable through the gateway (R8, D21), and the reliable way to guarantee that is to
     # serve them from a socket the gateway cannot reach — not a middleware check on a header
     # the caller controls.
-    public_host: str = Field(default="0.0.0.0", description="Gateway- and overlay-facing.")
+    # nosec B104 — binding all interfaces is the point: this socket is what the gateway
+    # and the overlay reach. The endpoints that must NOT be public live on the internal
+    # app, which binds loopback (R8).
+    public_host: str = Field(  # nosec B104
+        default="0.0.0.0",  # nosec B104
+        description="Gateway- and overlay-facing.",
+    )
     public_port: int = Field(default=8000)
     internal_host: str = Field(
         default="127.0.0.1",

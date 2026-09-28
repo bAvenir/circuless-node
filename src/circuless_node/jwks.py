@@ -87,9 +87,11 @@ class JwksCache:
             with httpx.Client(timeout=self._timeout) as client:
                 document = client.get(uri).raise_for_status().json()
             self._keys = {k.key_id: k for k in jwt.PyJWKSet.from_dict(document).keys if k.key_id}
-        except Exception:
-            # Deliberately swallowed. An unreachable Keycloak must not turn into a 500 for
-            # a caller holding a perfectly good token signed by a key we already hold.
+        except Exception:  # nosec B110 — see below; swallowing is the requirement
+            # Deliberately swallowed (F16): stale keys beat no keys. An unreachable
+            # Keycloak must not turn into a 500 for a caller holding a perfectly good
+            # token signed by a key we already have. The failure surfaces instead as
+            # tokens signed by a NEW key being rejected, which is the correct outcome.
             pass
         finally:
             # Recorded even on failure, so a persistently unreachable Keycloak is retried
