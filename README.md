@@ -131,6 +131,42 @@ than an error, because they would never find out.
 
 Auditors ask on whose behalf a consultant read a file. This is the answer, and N11 logs it.
 
+## One process, several organisations
+
+Every tenant-owned query is filtered once, centrally, by a session-level
+`with_loader_criteria` (N4). No handler writes `WHERE tenant_id = ...` itself, so a handler
+that forgets cannot leak anything. Isolation here is **code-enforced, not OS-enforced** —
+a declared limitation (§4.3) that belongs in D2.1 and the T2.7 material.
+
+```python
+with tenant_scope(session, tenant.id):
+    ...  # only this tenant's rows exist
+
+with all_tenants(session):
+    ...  # deliberately across tenants — the purge job (N20), and little else
+```
+
+**A table opts in by subclassing `TenantOwned`**, so the model's shape decides, not a list
+someone has to remember to update. The node-global tables — `AgreementCache`, `OrgMap`,
+`NodeIdentity` — deliberately do not subclass it: filtering them would break sync, because
+the agreements a node enforces belong to no single tenant (R10).
+
+**An unscoped query raises rather than returning everything.** If the filter quietly did
+nothing when no tenant was bound, forgetting to bind would disable isolation while looking
+exactly like working code.
+
+**Writes are checked too.** `with_loader_criteria` only touches SELECT, so a separate
+`before_flush` check refuses a row whose `tenant_id` is not the bound one — otherwise a
+handler could insert under someone else's tenant and then never see the row again.
+
+### Scoping is not authorisation
+
+This layer guarantees a query about tenant A returns only tenant A's rows. It says nothing
+about whether *this caller* may act on tenant A — that is `decide()` for consumption (N6)
+and management authorisation for the rest (N18). Conflating the two is how a hole appears:
+a caller from another organisation reaching `/v1/t/alpha/...` gets correctly-scoped Alpha
+data unless something else stops them.
+
 ## Two sockets, not one
 
 The node serves two applications on separate ports, and which port something is on *is* the
@@ -165,6 +201,7 @@ src/circuless_node/
     app.py        the two applications, CORS, the /v1 router
     settings.py   configuration; refuses a wildcard CORS origin
     models.py     tenant-owned vs node-global tables (R10)
+    tenancy.py    the central tenant filter, and the scopes that drive it
     db.py         engine; SQLite in WAL mode
     storage.py    fsspec adapter, and path confinement
     errors.py     reason codes — one enum, no free text
@@ -196,8 +233,8 @@ so a wildcard would let any site spend a user's node token.
 ## State of the build
 
 Built: **N1** skeleton, **N14** storage, **H3**'s `/v1` prefix, **Q1** test harness,
-**N2** token verification, **N3** subject resolver. Next: tenancy (N4) and node
-self-authentication (N17).
+**N2** token verification, **N3** subject resolver, **N4** tenancy. Next: node
+self-authentication (N17), the last node item in M1.
 
 `/v1/whoami` returns the resolved subject — organisations, admin-of, acting org — which is
 the shape `decide()` will consume. `resolve_acting_org` takes the candidate organisations

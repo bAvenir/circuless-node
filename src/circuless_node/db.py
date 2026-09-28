@@ -8,7 +8,14 @@ from pathlib import Path
 from sqlalchemy import Engine, event
 from sqlmodel import Session, create_engine
 
+from . import tenancy as _tenancy  # noqa: F401
 from .settings import Settings
+
+# The import above is for its side effect, and it is load-bearing: importing `tenancy`
+# registers the session listeners that scope every tenant-owned query (N4). It lives here
+# because everything that makes a session comes through this module, so there is no path
+# to a database that skips it. Without the import the node would run with tenant
+# isolation silently switched off.
 
 
 def create_db_engine(settings: Settings) -> Engine:
