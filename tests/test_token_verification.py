@@ -40,7 +40,7 @@ def test_a_user_token_is_accepted(client: TestClient, realm: FixtureRealm) -> No
     assert response.status_code == 200
     body = response.json()
     assert body["principal_type"] == "user"
-    assert body["groups"] == ["/orgs/alpha"]
+    assert body["org_ids"] == ["alpha"]
     assert body["actor"] == "test-ui"
 
 
@@ -50,8 +50,8 @@ def test_a_service_token_is_accepted_with_its_org(client: TestClient, realm: Fix
     assert response.status_code == 200
     body = response.json()
     assert body["principal_type"] == "service"
-    assert body["org_id"] == "alpha", "a service's organisation is an attribute, not a group"
-    assert body["groups"] == []
+    assert body["org_ids"] == ["alpha"], "a service's organisation is an attribute, not a group"
+    assert body["admin_of"] == [], "a service is never an org admin (N18)"
 
 
 def test_a_node_audienced_token_carries_no_name_or_email(realm: FixtureRealm) -> None:

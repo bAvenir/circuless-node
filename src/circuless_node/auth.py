@@ -27,6 +27,7 @@ from fastapi import Request
 from .errors import NodeError, Reason
 from .jwks import JwksCache, SigningKeyUnavailableError
 from .settings import Settings
+from .subject import ACTING_ORG_HEADER, Subject, resolve_subject
 
 # On-prem nodes drift. G13: a node whose clock is a few seconds off would otherwise reject
 # tokens that are perfectly valid, intermittently, in a way nobody enjoys diagnosing.
@@ -166,3 +167,23 @@ def require_token(request: Request) -> VerifiedToken:
 
     verifier: TokenVerifier = request.app.state.verifier
     return verifier.verify(credential.strip())
+
+
+def require_subject(request: Request) -> Subject:
+    """The dependency handlers actually want: a verified token, resolved into a Subject.
+
+    Handlers take this rather than `require_token` so that no handler is ever in a
+    position to read a claim and interpret it its own way — there is one resolver and one
+    `Subject` (§3.2).
+    """
+    return resolve_subject(require_token(request))
+
+
+def requested_acting_org(request: Request) -> str | None:
+    """The caller naming which of *their own* organisations they are acting as (R11).
+
+    It grants nothing. `resolve_acting_org` checks it against membership, so the header
+    can only narrow a choice the subject already had.
+    """
+    value = request.headers.get(ACTING_ORG_HEADER)
+    return value.strip() or None if value else None

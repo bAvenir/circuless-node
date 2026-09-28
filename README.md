@@ -95,6 +95,42 @@ it unthrottled an invented `kid` becomes a way to make the node hammer Keycloak.
 beat no keys when Keycloak is unreachable (F16); the cache is in memory only, because an
 outage longer than the 5-minute token lifetime stops consumption anyway (§3.7).
 
+## Who is asking, and on whose behalf
+
+`require_subject` gives a handler one normalised `Subject`, so no handler ever reads a
+claim and interprets it its own way (§3.2). Identity comes from the token and never from
+the request body (R3, D17).
+
+| | |
+|---|---|
+| A user's organisations | depth-one groups: `/orgs/alpha`. Anything deeper, and anything outside `/orgs`, is ignored (G14) |
+| Admin of an organisation | membership of `/orgs/alpha/admins`, and of that organisation alone (R17) |
+| A service's organisation | the `org_id` claim, never groups — and a service is **never** an org admin (N18) |
+| The actor | `azp`. Token exchange carries no `act` claim, so this is the only trace of a service acting for someone |
+
+**Being an admin implies being a member.** Keycloak does not require membership of the
+parent group, and admin rights should not depend on how carefully someone clicked.
+
+**An unrecognised subgroup confers nothing** — not even membership. `/orgs/alpha/teams/blue`
+makes you neither a member nor an admin of alpha.
+
+### Acting organisation
+
+People work for more than one organisation, so which one a request is made on behalf of is
+resolved per request (R11), by intersecting the subject's organisations with those that
+could authorise *this* request:
+
+- one match → that one;
+- several → the caller sends `X-CIRCULess-Acting-Org`;
+- none, or a header naming an organisation they are not in → refused.
+
+The header grants nothing: it is checked against membership, so it can only narrow a
+choice the subject already had. Naming someone else's organisation is refused rather than
+ignored — quietly acting as a different organisation than the caller asked for is worse
+than an error, because they would never find out.
+
+Auditors ask on whose behalf a consultant read a file. This is the answer, and N11 logs it.
+
 ## Two sockets, not one
 
 The node serves two applications on separate ports, and which port something is on *is* the
@@ -160,8 +196,9 @@ so a wildcard would let any site spend a user's node token.
 ## State of the build
 
 Built: **N1** skeleton, **N14** storage, **H3**'s `/v1` prefix, **Q1** test harness,
-**N2** token verification. Next: the subject resolver (N3), tenancy (N4) and node
+**N2** token verification, **N3** subject resolver. Next: tenancy (N4) and node
 self-authentication (N17).
 
-`/v1/whoami` currently returns verified *claims*. N3 replaces that with the resolved
-subject — organisations, admin-of, acting org — which is the shape `decide()` consumes.
+`/v1/whoami` returns the resolved subject — organisations, admin-of, acting org — which is
+the shape `decide()` will consume. `resolve_acting_org` takes the candidate organisations
+as an argument; N6 is what will supply real ones, from the resource and its agreements.

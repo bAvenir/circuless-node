@@ -50,6 +50,21 @@ These are what the node's behaviour actually depends on:
    `principal_type` is refused rather than treated as a user, because a node whose attribute
    was never set would otherwise pass the check meant to reject it.
 
+## Open: what an organisation is called
+
+Today an organisation is identified by a **slug** on both sides — `alpha`, read from
+`/orgs/alpha` for a user, and whatever the `org_id` attribute holds for a service. The
+fixture realm and the production realm currently agree on that.
+
+§3.2 says the Cloud's registry maps `/orgs/alpha` to a **UUID** and syncs it to nodes, at
+which point both should carry UUIDs instead. The translation belongs in N7, where OrgMap
+arrives.
+
+**Both sources have to move together.** If users resolved to slugs while services resolved
+to UUIDs, every comparison between them would silently fail to match — a service would
+simply never be in the same organisation as a user, and no error would say so. Whoever
+does N7 changes the group-path translation and the `org_id` claim in the same change.
+
 ## Deliberately not here
 
 The test realm has no `circuless-cloud` audience, no service-audience scopes (`svc:*`), no

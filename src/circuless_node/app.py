@@ -22,11 +22,12 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 
-from .auth import TokenVerifier, VerifiedToken, require_token
+from .auth import TokenVerifier, requested_acting_org, require_subject
 from .db import create_db_engine
-from .errors import install_error_handlers
+from .errors import NodeError, install_error_handlers
 from .settings import Settings, get_settings
 from .storage import Storage
+from .subject import Subject, resolve_acting_org
 
 API_PREFIX = "/v1"
 
@@ -78,29 +79,38 @@ def v1_router() -> APIRouter:
     router = APIRouter(prefix=API_PREFIX)
 
     @router.get("/whoami")
-    def whoami(token: VerifiedToken = Depends(require_token)) -> dict:
-        """What this node makes of your token.
+    def whoami(
+        subject: Subject = Depends(require_subject),
+        requested_org: str | None = Depends(requested_acting_org),
+    ) -> dict:
+        """What this node makes of your token — the resolved subject, as `decide()` sees it.
 
         Useful in three places: it is the M1 demo — a node accepting a user token,
         refusing a node token, refusing a token meant for another node; it gives someone
         installing a node from the guide a way to confirm it reads their tokens correctly;
         and it is how the route-auth test gets something real to check.
 
-        It echoes only claims the caller already holds, so it discloses nothing they did
-        not bring with them.
-
-        N2 returns the verified claims. N3 replaces this with the resolved subject —
-        organisations, admin-of, acting org — which is the shape `decide()` consumes.
+        It discloses nothing the caller did not bring with them: these are their own
+        claims, normalised.
         """
-        return {
-            "sub": token.sub,
-            "principal_type": token.principal_type,
-            "actor": token.actor,
-            "groups": token.groups,
-            "org_id": token.org_id,
-            "node_id": token.node_id,
-            "audience": token.claims.get("aud"),
+        body: dict = {
+            "sub": subject.sub,
+            "principal_type": subject.principal_type.value,
+            "actor": subject.actor,
+            "org_ids": sorted(subject.org_ids),
+            "admin_of": sorted(subject.admin_of),
         }
+
+        # Resolved against the subject's own organisations, since no resource is in play
+        # here. A real endpoint narrows the candidates to whoever could authorise that
+        # particular request, which is where ambiguity usually disappears.
+        try:
+            body["acting_org"] = resolve_acting_org(subject, subject.org_ids, requested_org)
+        except NodeError as refusal:
+            body["acting_org"] = None
+            body["acting_org_reason"] = refusal.reason.value
+
+        return body
 
     return router
 

@@ -13,7 +13,8 @@
   "realm": "circuless-test",
   "nodeId": "test-node",
 
-  "groups": ["/orgs/alpha", "/orgs/alpha/admins", "/orgs/beta", "/orgs/beta/admins"],
+  "groups": ["/orgs/alpha", "/orgs/alpha/admins", "/orgs/beta", "/orgs/beta/admins",
+             "/orgs/beta/admins/subteam", "/elsewhere/alpha"],
 
   "userProfileAttributes": ["org_id", "principal_type", "node_id"],
 
@@ -67,6 +68,12 @@
     { "username": "beta.user", "groups": ["/orgs/beta"], "principal_type": "user" },
     { "// consultant": "Member of both organisations, for acting-org resolution (R11).",
       "username": "consultant", "groups": ["/orgs/alpha", "/orgs/beta"],
+      "principal_type": "user" },
+    { "// admins.only": "In /orgs/beta/admins but NOT /orgs/beta. An admin of an organisation is a member of it, whatever the operator remembered to click.",
+      "username": "admins.only", "groups": ["/orgs/beta/admins"], "principal_type": "user" },
+    { "// odd.groups": "Groups outside /orgs, and one nested deeper than an org. All must be ignored (G14).",
+      "username": "odd.groups",
+      "groups": ["/orgs/alpha", "/orgs/beta/admins/subteam", "/elsewhere/alpha"],
       "principal_type": "user" },
     { "// stranger": "No organisation at all — a self-registered user nobody has admitted yet.",
       "username": "stranger", "groups": [], "principal_type": "user" },
