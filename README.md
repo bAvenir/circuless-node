@@ -95,6 +95,22 @@ it unthrottled an invented `kid` becomes a way to make the node hammer Keycloak.
 beat no keys when Keycloak is unreachable (F16); the cache is in memory only, because an
 outage longer than the 5-minute token lifetime stops consumption anyway (§3.7).
 
+### Enumerating routes is harder than it looks
+
+The no-anonymous-route gate and the `/v1` prefix test both assert things about whatever
+`tests/harness/routes.py` returns, so an enumerator that under-reports makes both pass by
+checking a shorter list. Three ways of writing it have now failed silently across the two
+repositories, and `tests/test_route_enumeration.py` pins each one:
+
+- `app.routes` filtered for `APIRoute` **misses included routers** — it returned nothing
+  here until `/v1/whoami` was added and the count stayed at zero;
+- `app.openapi()` **misses `include_in_schema=False`** — what this module used until the
+  backport. The node has no such route yet, which is exactly the problem: the gate would
+  have stopped covering the first one silently;
+- walking route objects **loses a nested router's prefix**, reporting `/orgs` for a route
+  served at `/v1/orgs` — so the gate requests a path that does not exist and reads the
+  404 as "not 401".
+
 ## Who is asking, and on whose behalf
 
 `require_subject` gives a handler one normalised `Subject`, so no handler ever reads a
