@@ -230,6 +230,63 @@ never": after M1, changing it breaks every client and every test at once.
 The only paths that ever live outside `/v1` are the internal three above, plus
 `/.well-known/circuless-node`, which arrives with N12 and requires a platform token.
 
+## Registering datasets and services (N5)
+
+```
+POST   /v1/t/{tenant}/resources                register a dataset or a service
+GET    /v1/t/{tenant}/resources                list this tenant's resources
+GET    /v1/t/{tenant}/resources/{id}
+PATCH  /v1/t/{tenant}/resources/{id}
+```
+
+The provider sends typed fields and the node composes the DCAT-AP record from them
+(`dcat.py`). That choice is what makes the rules enforceable: "has a licence from the
+controlled list" is a column check here, and a walk over arbitrary provider JSON-LD
+otherwise.
+
+**Three rules the endpoints exist for:**
+
+| | |
+|---|---|
+| Defaults are closed (NFR4) | a new resource is `discoverability=hidden`, `visibility=org` |
+| A licence is required to publish (NFR9) | from `vocabularies.LICENCES`, checked against the *resulting* state so a two-step publish cannot slip past |
+| A BVR-operated node refuses `sensitive` (D22) | and `operator` defaults to `bvr`, so the permissive value is the one somebody has to type |
+
+**`discoverability` and `visibility` are independent, and easy to confuse.** The first
+governs who may learn the resource *exists* — what reaches the Cloud catalogue. The second
+governs who may *read or invoke* it, and `decide()` (N6) owns it. A resource listed
+publicly and readable only under an agreement is the normal case.
+
+**A service is a `dcat:DataService`**, not a Dataset with a URL in it (R15) — with
+`endpointURL`, `endpointDescription` and `landingPage`. The `endpointURL` published is the
+node's own `/invoke` path: a consumer who learned the real upstream address could go round
+the node, past `decide()`, past the agreement check and past the log.
+
+**Changes mark, they do not push.** Registering sets a row in `catalogue_push` and
+returns; N7's loop sends the tenant's catalogue and clears it. Pushing inside the request
+would make registration fail whenever the Cloud is unreachable, turning a control-plane
+outage into a data-plane one — the thing F16 and D1 exist to prevent.
+
+## Who may manage a tenant's resources (N18)
+
+`management.py`, pure and table-tested, like the Cloud's `authz.decide()`:
+
+| Operation | Who |
+|---|---|
+| Register, update, upload, delete | admins **or service principals** of the tenant's org |
+| Credentials | admins only |
+| Read the access log | that organisation's admins |
+| Node configuration | the node client role `admin` |
+
+A service principal may publish but may never touch credentials. That distinction is why
+N18 exists: a pipeline account that can publish yesterday's run is useful, and the same
+account being able to rotate the upstream credential means a compromised pipeline can
+redirect where the node fetches from.
+
+**Scoping is not authorisation.** N4 guarantees a query about tenant A returns only tenant
+A's rows; it says nothing about whether this caller may act on tenant A at all. Every
+handler resolves the tenant and *then* calls `enforce_management`, in that order.
+
 ## Layout
 
 ```
@@ -238,6 +295,10 @@ src/circuless_node/
     settings.py   configuration; refuses a wildcard CORS origin
     models.py     tenant-owned vs node-global tables (R10)
     tenancy.py    the central tenant filter, and the scopes that drive it
+    resources.py  N5 registration, and the rules on licence and classification
+    management.py N18 who may manage a tenant's resources
+    dcat.py       rendering DCAT-AP from typed fields
+    vocabularies.py  the controlled lists: licences, themes, classification
     identity.py   the node's keypair, certificate and Cloud credentials
     oidc.py       discovery, shared by the JWKS cache and the credentials
     db.py         engine; SQLite in WAL mode
@@ -270,10 +331,17 @@ so a wildcard would let any site spend a user's node token.
 
 ## State of the build
 
-Built: **N1** skeleton, **N14** storage, **H3**'s `/v1` prefix, **Q1** test harness,
-**N2** token verification, **N3** subject resolver, **N4** tenancy, **N17** node
-self-authentication. **That completes the node's M1 scope.**
+**M1, complete:** **N1** skeleton, **N14** storage, **H3**'s `/v1` prefix, **Q1** test
+harness, **N2** token verification, **N3** subject resolver, **N4** tenancy, **N17** node
+self-authentication.
 
-`/v1/whoami` returns the resolved subject — organisations, admin-of, acting org — which is
-the shape `decide()` will consume. `resolve_acting_org` takes the candidate organisations
-as an argument; N6 is what will supply real ones, from the resource and its agreements.
+**M2, in progress:** **N5** resource registry and **N18** management authorization, here.
+
+Next: **N7** sync client, which drains `catalogue_push` and pulls provider-side agreements
+and the org map; then **N12** `/.well-known/circuless-node` and **N15** the NetBird client.
+
+Not yet built, and deliberately absent rather than stubbed: `decide()` (N6), uploads,
+and deletion. Deletion is two-stage (D25, N20 in M3), so there is no `DELETE` at all — a
+placeholder that actually removed a row would be the wrong thing to have to take back.
+`ResourceStatus.WITHDRAWN` exists from the start, and every query already excludes it, so
+N20 does not have to find the one that forgot.

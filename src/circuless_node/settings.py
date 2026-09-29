@@ -2,11 +2,25 @@
 
 from __future__ import annotations
 
+from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class NodeOperator(StrEnum):
+    """Who runs this node (D22).
+
+    A **BVR-operated node refuses `classification=sensitive`**. Not because BVR's node is
+    less secure — it is the better-run of the two, today — but because BVR holding a
+    partner's sensitive data on their behalf is the arrangement the project said it would
+    not make. A partner's own node may hold whatever that partner decides.
+    """
+
+    BVR = "bvr"
+    PARTNER = "partner"
 
 
 class Settings(BaseSettings):
@@ -30,6 +44,12 @@ class Settings(BaseSettings):
     node_client_id: str = Field(
         default="",
         description="Keycloak client this node authenticates as. Defaults to node-<node_id>.",
+    )
+
+    # --- what this node is allowed to hold ---------------------------------------------
+    operator: NodeOperator = Field(
+        default=NodeOperator.BVR,
+        description="Who runs this node. A BVR-operated node refuses sensitive data (D22).",
     )
 
     # --- storage ----------------------------------------------------------------------
@@ -88,6 +108,17 @@ class Settings(BaseSettings):
         if not self.node_client_id:
             object.__setattr__(self, "node_client_id", f"node-{self.node_id}")
         return self
+
+    @property
+    def refuses_sensitive(self) -> bool:
+        """D22, defaulting closed.
+
+        A node nobody has configured is treated as BVR-operated, so the cost of the
+        mistake is a partner being told to set a flag — not BVR silently holding
+        sensitive data it undertook not to hold. The permissive value is the one that has
+        to be typed out.
+        """
+        return self.operator is NodeOperator.BVR
 
     @property
     def audience(self) -> str:

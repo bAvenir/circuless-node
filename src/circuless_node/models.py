@@ -8,16 +8,32 @@ Two families, and the difference is load-bearing (R10):
     explicitly excluded from that filter. Applying it to them would break sync, because the
     agreements a node enforces belong to no single tenant.
 
-Only Tenant exists so far; the rest arrive with the components that own them. Alembic runs
-from this first model, so every later table comes as a migration rather than a schema edit.
+Alembic runs from the first model, so every later table comes as a migration rather than
+a schema edit someone applied by hand.
+
+Still to arrive: `ServiceCredential` (N10), `AccessLog` (N11), `AgreementCache` and
+`OrgMap` (N7).
 """
 
 from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
+from typing import Any
 
+from sqlalchemy import Column, UniqueConstraint
+from sqlalchemy.types import JSON
 from sqlmodel import Field, SQLModel
+
+from .vocabularies import (
+    Classification,
+    Discoverability,
+    ResourceKind,
+    ResourceStatus,
+    Shape,
+    Theme,
+    Visibility,
+)
 
 
 def _uuid() -> uuid.UUID:
@@ -72,3 +88,111 @@ class Tenant(SQLModel, table=True):
     group_path: str = Field(index=True, unique=True)
     slug: str = Field(index=True, unique=True)
     created_at: datetime = Field(default_factory=_now)
+
+
+class Resource(TenantOwned, table=True):
+    """A dataset or a service offered by one tenant (N5, F3, F4).
+
+    **Tenant-owned by shape.** Subclassing `TenantOwned` is what puts it under N4's
+    filter, so every query about resources is scoped without any handler writing
+    `WHERE tenant_id = ...`, and an unscoped one raises rather than returning everything.
+
+    ## Two settings that are easy to confuse
+
+    `discoverability` governs who may learn the resource **exists** — what reaches the
+    Cloud catalogue and what a search returns. `visibility` governs who may **read or
+    invoke** it, and is decided by `decide()` (N6). They are independent: a resource can
+    be listed publicly and readable only under an agreement, which is the normal case for
+    something worth discovering.
+
+    Both default to the closed end — `hidden` and `org` (NFR4). Registering a resource
+    publishes nothing; that takes a second, deliberate call.
+
+    ## The licence rule
+
+    `licence` may be null while a resource is `hidden`, because a provider registering
+    something before they have settled the terms is a reasonable thing to do. It must be
+    present, and from the controlled list, before `discoverability` leaves `hidden`
+    (NFR9). Enforced in `resources.py` rather than by a NOT NULL, because the constraint
+    is conditional on another column.
+    """
+
+    __tablename__ = "resource"
+    __table_args__ = (
+        # A slug is how a provider refers to their own resource in a script that does not
+        # want to hold a UUID. Unique per tenant, never globally: two organisations naming
+        # something `batch-7` is not a conflict, and making it one would leak the fact
+        # that the other name exists.
+        UniqueConstraint("tenant_id", "slug", name="uq_resource_tenant_slug"),
+    )
+
+    id: uuid.UUID = Field(default_factory=_uuid, primary_key=True)
+    slug: str = Field(index=True, max_length=64)
+
+    kind: ResourceKind = Field(max_length=16)
+    shape: Shape = Field(max_length=16)
+    status: ResourceStatus = Field(default=ResourceStatus.ACTIVE, max_length=16, index=True)
+
+    # --- what the catalogue shows -------------------------------------------------------
+    title: str = Field(max_length=255)
+    description: str = Field(default="", max_length=4000)
+    theme: Theme = Field(max_length=32)
+    #: An SPDX identifier or EU Vocabularies key from `vocabularies.LICENCES`, never a
+    #: free URI: an unresolvable licence is worse than none, because it looks like one.
+    licence: str | None = Field(default=None, max_length=64)
+
+    # --- sharing ------------------------------------------------------------------------
+    discoverability: Discoverability = Field(
+        default=Discoverability.HIDDEN, max_length=16, index=True
+    )
+    visibility: Visibility = Field(default=Visibility.ORG, max_length=16, index=True)
+    classification: Classification = Field(max_length=16)
+
+    # --- where the content is -----------------------------------------------------------
+    #: Datasets. Relative to the tenant's directory, resolved by `storage.Storage`, which
+    #: refuses anything escaping it.
+    storage_path: str | None = Field(default=None, max_length=1024)
+    #: Services. Where the node proxies `/invoke` to — never returned to a consumer, who
+    #: reaches the service only through this node.
+    endpoint_url: str | None = Field(default=None, max_length=1024)
+    #: Services. A URL, or a document stored like any other content.
+    openapi_ref: str | None = Field(default=None, max_length=1024)
+    #: Services. Timeouts, size limits, streaming — declared by the provider at
+    #: registration and read by N9 when it proxies. JSON because its shape is the
+    #: provider's, not ours.
+    invoke_policy: dict[str, Any] | None = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
+
+    # --- two-stage deletion (D25, N20 in M3) ---------------------------------------------
+    withdrawn_at: datetime | None = Field(default=None)
+    purge_after: datetime | None = Field(default=None)
+
+    created_at: datetime = Field(default_factory=_now)
+    updated_at: datetime = Field(default_factory=_now)
+
+
+class CataloguePush(SQLModel, table=True):
+    """Which tenants have catalogue changes the Cloud has not been told about yet (N5→N7).
+
+    **Node-global**, and deliberately so: it is about this node's relationship with the
+    Cloud, not about any tenant's data, so N4's filter must not touch it (R10). The
+    `tenant_id` here is a payload, not an ownership marker.
+
+    Registering a resource marks the tenant dirty and returns. N7's loop pushes the
+    catalogue for dirty tenants and clears the flag. Pushing inside the request would
+    make registration fail whenever the Cloud is unreachable, turning a control-plane
+    outage into a data-plane one — which is the thing the cached-enforcement design
+    (F16, D1) exists to avoid.
+
+    One row per tenant, not per change: what N7 sends is the tenant's whole catalogue, so
+    ten edits before the next push are one push, and a push lost to a restart is still
+    pending afterwards rather than lost.
+    """
+
+    __tablename__ = "catalogue_push"
+
+    tenant_id: uuid.UUID = Field(foreign_key="tenant.id", primary_key=True)
+    #: When the catalogue last changed. N7 clears the row once it has pushed; a row that
+    #: reappears during a push is a change that arrived mid-flight and must not be lost.
+    marked_at: datetime = Field(default_factory=_now)

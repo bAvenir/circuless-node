@@ -25,6 +25,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .auth import TokenVerifier, requested_acting_org, require_subject
 from .db import create_db_engine
 from .errors import NodeError, install_error_handlers
+from .resources import resource_router
 from .settings import Settings, get_settings
 from .storage import Storage
 from .subject import Subject, resolve_acting_org
@@ -112,6 +113,7 @@ def v1_router() -> APIRouter:
 
         return body
 
+    router.include_router(resource_router())
     return router
 
 

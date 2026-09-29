@@ -26,7 +26,15 @@ class Reason(StrEnum):
     NO_AGREEMENT = "no_agreement"
     NOT_PERMITTED = "not_permitted"
 
+    # Resource registry (N5)
+    #: NFR9 — a licence from the controlled list is required before publishing.
+    LICENCE_REQUIRED = "licence_required"
+    #: D22 — a BVR-operated node refuses classification=sensitive.
+    CLASSIFICATION_NOT_PERMITTED = "classification_not_permitted"
+
     # Requests and resources
+    CONFLICT = "conflict"
+    INVALID_REQUEST = "invalid_request"
     NOT_FOUND = "not_found"
     PATH_NOT_ALLOWED = "path_not_allowed"
     PAYLOAD_TOO_LARGE = "payload_too_large"
