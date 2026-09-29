@@ -11,8 +11,7 @@ Two families, and the difference is load-bearing (R10):
 Alembic runs from the first model, so every later table comes as a migration rather than
 a schema edit someone applied by hand.
 
-Still to arrive: `ServiceCredential` (N10), `AccessLog` (N11), `AgreementCache` and
-`OrgMap` (N7).
+Still to arrive: `ServiceCredential` (N10) and `AccessLog` (N11).
 """
 
 from __future__ import annotations
@@ -196,3 +195,68 @@ class CataloguePush(SQLModel, table=True):
     #: When the catalogue last changed. N7 clears the row once it has pushed; a row that
     #: reappears during a push is a change that arrived mid-flight and must not be lost.
     marked_at: datetime = Field(default_factory=_now)
+
+
+class OrgMap(SQLModel, table=True):
+    """The Cloud's organisation registry, as this node last saw it (N7, F1).
+
+    **Node-global** (R10): it describes the platform, not one tenant's data, and the sync
+    that maintains it belongs to no tenant. Filtering it would break the pull.
+
+    Exists because no stock Keycloak mapper emits group attributes, so the mapping from a
+    group path to a stable id has to be carried somewhere (§3.2).
+
+    `slug` is what the node compares against — a token yields `/orgs/alpha`, which parses
+    to `alpha`, and `Subject.org_ids` holds slugs. `org_id` is carried for the day both
+    sides move to UUIDs, which `docs/identity-contract.md` in the Cloud repository says
+    has to happen on both at once.
+    """
+
+    __tablename__ = "org_map"
+
+    slug: str = Field(primary_key=True, max_length=64)
+    org_id: uuid.UUID = Field(index=True)
+    group_path: str = Field(index=True, max_length=255)
+    display_name: str = Field(default="", max_length=255)
+    synced_at: datetime = Field(default_factory=_now)
+
+
+class AgreementCache(SQLModel, table=True):
+    """Agreements this node enforces, as the Cloud last sent them (N7, F7, F14).
+
+    **Node-global** (R10), and this is the case that makes the distinction load-bearing:
+    an agreement is between two organisations, so it belongs to neither tenant's rows.
+    Filtering it by tenant would return nothing and quietly deny every cross-org read.
+
+    **Provider side only** (R4). The Cloud sends agreements where an organisation *hosted
+    on this node* is the provider — never another organisation's consumer-side
+    arrangements. A node therefore cannot learn what its tenants are buying elsewhere,
+    which matters when the node is operated by a competitor of the other party.
+
+    **A cache, not a record.** The Cloud owns agreements (§4.5); this is a copy kept so
+    that `decide()` needs no network call on the request path, and so enforcement
+    continues through a Cloud outage (F16). A pull replaces the set wholesale, because a
+    revocation is an absence and a merge would never notice one.
+    """
+
+    __tablename__ = "agreement_cache"
+
+    id: uuid.UUID = Field(primary_key=True)
+    provider_org: str = Field(index=True, max_length=64)
+    consumer_org: str = Field(index=True, max_length=64)
+    #: Null means every resource of the provider, which is how a blanket agreement is
+    #: expressed. Not a sentinel UUID: null is the thing SQL can answer questions about.
+    resource_id: uuid.UUID | None = Field(default=None, index=True)
+    #: A subset of {read, invoke}, stored as a sorted comma-separated list. A JSON array
+    #: would be more natural and less queryable; there are two possible values.
+    actions: str = Field(max_length=32)
+    valid_from: datetime
+    valid_until: datetime | None = Field(default=None)
+    status: str = Field(max_length=16, index=True)
+    #: The CIRCULess ODRL 2.2 subset, opaque here. `decide()` reads it in N6; the node
+    #: never edits it, so its shape is the Cloud's business.
+    policy: dict[str, Any] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
+    synced_at: datetime = Field(default_factory=_now)
+
+    def permits(self, action: str) -> bool:
+        return action in self.actions.split(",")

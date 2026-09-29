@@ -303,6 +303,65 @@ redirect where the node fetches from.
 A's rows; it says nothing about whether this caller may act on tenant A at all. Every
 handler resolves the tenant and *then* calls `enforce_management`, in that order.
 
+## Staying in step with the Cloud (N7)
+
+Three exchanges, all started by the node. **The Cloud never reaches into a node** — a
+node behind a partner's firewall has no inbound ports at all (D10).
+
+| | |
+|---|---|
+| push | the tenant's whole DCAT catalogue, when N5 marked it dirty |
+| pull | provider-side agreements and the org map, every 30 s |
+| heartbeat | "still here", with the running version |
+
+The loop is a **peer of the two servers**, not part of either: `_serve()` runs all three
+with `asyncio.gather`, so there is nothing extra to install or schedule on a partner
+site, and syncing stops when the node stops.
+
+**A pull replaces; it never merges.** A revocation is an *absence* from the feed, and a
+merge would never notice one — so the node would go on honouring an agreement the
+provider had withdrawn. The whole provider-side set arrives each time and replaces what
+is there, in one transaction.
+
+**Only provider-side agreements arrive** (R4). A node never learns what its tenants are
+buying elsewhere, which matters when the node is operated by a competitor of the other
+party.
+
+### When the Cloud is down (F16)
+
+A failed pull changes nothing: the cache stays, `decide()` keeps answering from it, and
+the node goes on serving. A control-plane outage must not become a data-plane one. The
+window is bounded anyway — nobody can get a fresh token once Keycloak is unreachable, and
+tokens live five minutes — so the exposure is a revocation arriving late.
+
+**`/healthz` stays 200 when the cache is stale.** A node enforcing from a stale cache is
+doing exactly what it was designed to do, and a 503 would have an orchestrator remove it
+during the very outage the cache exists to survive — every node at once, since they would
+all be stale together. Staleness belongs on `/metrics`, where it is an alert rather than
+an eviction:
+
+```
+circuless_node_sync_age_seconds      seconds since this process last synced, or -1
+circuless_node_sync_failures_total   consecutive failures
+circuless_node_agreements_cached     agreements currently enforced
+```
+
+`sync_age_seconds` is the age of **this process's** last success, not of the cache — the
+state is held in memory, so a restart resets it while the cache in the database survives.
+Worth knowing before reading it during an incident.
+
+A node whose certificate nobody has registered yet keeps serving and records the failure;
+`circuless-node check` says so plainly.
+
+### What is not asserted here
+
+`tick()` talks to a `CloudTransport` and the tests drive it with a fake, so **what the
+node does** is covered and **what it puts on the wire** is not. The Cloud API is in a
+private repository and this one is public, so the node's CI cannot run it — the same
+constraint that makes `tests/realm/` a fixture. Until the cross-repo tests (Q1) run, the
+paths and payloads in `sync.HttpCloud` are a proposal that the Cloud's C5 and C6 have to
+match, and nothing in this repository would notice if they did not.
+
 ## Layout
 
 ```
@@ -312,6 +371,7 @@ src/circuless_node/
     models.py     tenant-owned vs node-global tables (R10)
     tenancy.py    the central tenant filter, and the scopes that drive it
     resources.py  N5 registration, and the rules on licence and classification
+    sync.py       N7 push, pull, heartbeat, and the staleness metrics
     management.py N18 who may manage a tenant's resources
     dcat.py       rendering DCAT-AP from typed fields
     vocabularies.py  the controlled lists: licences, themes, classification
@@ -351,10 +411,11 @@ so a wildcard would let any site spend a user's node token.
 harness, **N2** token verification, **N3** subject resolver, **N4** tenancy, **N17** node
 self-authentication.
 
-**M2, in progress:** **N5** resource registry and **N18** management authorization, here.
+**M2, in progress:** **N5** resource registry, **N18** management authorization, **N7**
+sync client.
 
-Next: **N7** sync client, which drains `catalogue_push` and pulls provider-side agreements
-and the org map; then **N12** `/.well-known/circuless-node` and **N15** the NetBird client.
+Next: **N12** `/.well-known/circuless-node` and **N15** the NetBird client, then the
+remote dry run (Q3).
 
 Not yet built, and deliberately absent rather than stubbed: `decide()` (N6), uploads,
 and deletion. Deletion is two-stage (D25, N20 in M3), so there is no `DELETE` at all — a

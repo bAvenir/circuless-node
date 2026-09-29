@@ -23,9 +23,11 @@ from .identity import (
     load_or_create_keypair,
 )
 from .settings import Settings, get_settings
+from .sync import SyncState, sync_loop
 
 
 async def _serve(settings: Settings) -> None:
+    internal_app = create_internal_app(settings)
     public = uvicorn.Server(
         uvicorn.Config(
             create_public_app(settings),
@@ -40,7 +42,7 @@ async def _serve(settings: Settings) -> None:
     )
     internal = uvicorn.Server(
         uvicorn.Config(
-            create_internal_app(settings),
+            internal_app,
             host=settings.internal_host,
             port=settings.internal_port,
             log_level="warning",
@@ -52,10 +54,22 @@ async def _serve(settings: Settings) -> None:
         f"internal on {settings.internal_host}:{settings.internal_port}",
         flush=True,
     )
-    # Both servers share one process and one event loop; if either stops, the process
-    # stops. A node serving data with no health endpoint — or a health endpoint with no
-    # node — is worse than a node that is plainly down.
-    await asyncio.gather(public.serve(), internal.serve())
+    # Both servers and the sync loop share one process and one event loop; if any of
+    # them stops, the process stops. A node serving data with no health endpoint — or a
+    # health endpoint with no node — is worse than a node that is plainly down.
+    #
+    # The loop is a peer of the servers, not a subordinate of one. Syncing is one of the
+    # three things this process does, and putting it in a server's lifespan would make
+    # it look like part of serving requests, which it is not.
+    #
+    # It shares the internal app's SyncState so that /metrics reports what the loop
+    # actually did, rather than a second copy that agrees by coincidence.
+    state: SyncState = internal_app.state.sync_state
+    await asyncio.gather(
+        public.serve(),
+        internal.serve(),
+        sync_loop(settings, internal_app.state.engine, state),
+    )
 
 
 def _serve_command(settings: Settings) -> int:

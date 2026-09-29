@@ -29,12 +29,18 @@ from .resources import resource_router
 from .settings import Settings, get_settings
 from .storage import Storage
 from .subject import Subject, resolve_acting_org
+from .sync import SyncState, metrics_text
 
 API_PREFIX = "/v1"
 
 
 def _attach_resources(app: FastAPI, settings: Settings) -> None:
     app.state.settings = settings
+    # One SyncState per process, shared by the loop that writes it and /metrics that
+    # reads it. Held in memory by decision: a restart resets it, so it reports the age
+    # of this process rather than the age of the cache, which outlives it in the
+    # database. The metric is named accordingly.
+    app.state.sync_state = SyncState()
     app.state.engine = create_db_engine(settings)
     app.state.storage = Storage(settings)
     app.state.verifier = TokenVerifier(settings)
@@ -135,14 +141,29 @@ def create_internal_app(settings: Settings | None = None) -> FastAPI:
         """Liveness. Status code only, no body (D21).
 
         A body would leak versions and sync state to anything that can reach the socket.
-        N7 adds stale-cache signalling, which is reported through the status code.
+
+        **200 even when the agreement cache is stale.** An earlier note here said N7
+        would signal staleness through the status code; that would be wrong. A node
+        enforcing from a stale cache is doing exactly what F16 designed it to do, and a
+        503 would have an orchestrator remove it during the very Cloud outage the cache
+        exists to survive — and remove every node at once, since they would all be stale
+        together. Staleness is on `/metrics`, where it is an alert rather than an
+        eviction.
         """
         return Response(status_code=200)
 
     @app.get("/metrics")
     def metrics() -> Response:
-        # Prometheus text format arrives with C13; the route exists now so that the
-        # interface split is settled and testable from the start.
-        return Response(status_code=200, content="", media_type="text/plain; version=0.0.4")
+        """Sync staleness now (F16); the rest of the node's metrics with C13.
+
+        Internal socket only. Cache age and failure counts tell anyone who can read them
+        when this node is running degraded, which is operational detail and not a thing
+        to publish through the gateway (R8).
+        """
+        return Response(
+            status_code=200,
+            content=metrics_text(app.state.sync_state),
+            media_type="text/plain; version=0.0.4",
+        )
 
     return app
