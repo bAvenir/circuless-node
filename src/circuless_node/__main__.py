@@ -15,6 +15,7 @@ import sys
 
 import uvicorn
 
+from . import __version__
 from .app import create_internal_app, create_public_app
 from .identity import (
     CloudAuthenticationError,
@@ -68,7 +69,7 @@ async def _serve(settings: Settings) -> None:
     await asyncio.gather(
         public.serve(),
         internal.serve(),
-        sync_loop(settings, internal_app.state.engine, state),
+        sync_loop(settings, internal_app.state.engine, state, version=__version__),
     )
 
 

@@ -22,6 +22,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 
+from . import __version__
 from .auth import TokenVerifier, requested_acting_org, require_subject
 from .db import create_db_engine
 from .errors import NodeError, install_error_handlers
@@ -30,8 +31,17 @@ from .settings import Settings, get_settings
 from .storage import Storage
 from .subject import Subject, resolve_acting_org
 from .sync import SyncState, metrics_text
+from .well_known import node_document
 
 API_PREFIX = "/v1"
+
+#: Public paths allowed outside `/v1` (invariant 1). Exactly one, and it is asserted, so
+#: adding to this set fails a test before it reaches a review.
+#:
+#: `.well-known` is an interoperability convention: a client finds it by knowing the
+#: convention, and versioning it would mean nobody could. It still requires a token —
+#: D21 has no anonymous routes, and this one least of all (see `well_known`).
+UNVERSIONED_PATHS = {"/.well-known/circuless-node"}
 
 
 def _attach_resources(app: FastAPI, settings: Settings) -> None:
@@ -51,7 +61,7 @@ def create_public_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
     app = FastAPI(
         title="CIRCULess Node",
-        version="0.1.0",
+        version=__version__,
         # No docs on the public app: the schema is published through the catalogue, and an
         # unauthenticated endpoint listing every route is a gift to anyone scanning.
         docs_url=None,
@@ -72,6 +82,16 @@ def create_public_app(settings: Settings | None = None) -> FastAPI:
             allow_headers=["Authorization", "Content-Type", "X-CIRCULess-Acting-Org", "Range"],
             expose_headers=["Content-Range", "Accept-Ranges", "Location"],
         )
+
+    @app.get("/.well-known/circuless-node")
+    def well_known(_: Subject = Depends(require_subject)) -> dict:
+        """What this node is, and how to reach it (N12).
+
+        Outside `/v1` by convention and inside D21 by rule: the dependency is what makes
+        an anonymous request 401, and the route-auth test asserts it along with every
+        other route rather than trusting this line.
+        """
+        return node_document(app.state.settings)
 
     app.include_router(v1_router())
     return app
@@ -128,7 +148,7 @@ def create_internal_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
     app = FastAPI(
         title="CIRCULess Node (internal)",
-        version="0.1.0",
+        version=__version__,
         docs_url="/docs",
         redoc_url=None,
         openapi_url="/openapi.json",

@@ -303,6 +303,42 @@ redirect where the node fetches from.
 A's rows; it says nothing about whether this caller may act on tenant A at all. Every
 handler resolves the tenant and *then* calls `enforce_management`, in that order.
 
+## What a node says about itself (N12)
+
+```sh
+curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8000/.well-known/circuless-node
+```
+
+Identity, how to reach it, and what it can be asked to do. **It requires a token** —
+unusual for a `.well-known` path and deliberate: an unauthenticated description of a node
+is a free inventory for anyone scanning, giving its version, its overlay address and
+confirmation that a CIRCULess node is running here. Everyone who needs it holds a token.
+
+It is the only public path outside `/v1` (invariant 1), listed in `UNVERSIONED_PATHS`,
+which is itself asserted — so adding a second one fails a test first. `.well-known` is an
+interoperability convention; versioning it would mean nobody could find it by convention.
+
+**Two endpoints, in preference order.** A client that can join the overlay reaches the
+node directly and the Cloud is not on the path at all (§5.6); the gateway is the fallback
+for browsers and anything that cannot install an agent. Both come from node settings
+rather than from the Cloud, because this is the document somebody reads while trying to
+reach a node that is having trouble.
+
+**It does not list the organisations hosted here.** That is the one thing in scope that
+is about other people rather than about the node, and the Cloud restricts the same
+mapping to `platform-admin`. It is unreachable rather than merely omitted: `node_document`
+takes settings and nothing else, so it has no way to read the tenant table, and a test
+asserts that signature.
+
+### One version, derived
+
+`__version__` comes from the installed distribution. It used to be a constant in
+`__init__.py` and had already drifted — `0.1.0` against `pyproject.toml`'s `0.2.0` —
+which nothing noticed because nothing read it. It is now published here, sent in the
+heartbeat, and used as the OpenAPI version, so a stale constant would be the node telling
+the platform three wrong things about itself. `bvr-ci` bumps the manifest; everything
+else follows.
+
 ## Staying in step with the Cloud (N7)
 
 Three exchanges, all started by the node. **The Cloud never reaches into a node** — a
@@ -372,6 +408,7 @@ src/circuless_node/
     tenancy.py    the central tenant filter, and the scopes that drive it
     resources.py  N5 registration, and the rules on licence and classification
     sync.py       N7 push, pull, heartbeat, and the staleness metrics
+    well_known.py N12 what the node publishes about itself
     management.py N18 who may manage a tenant's resources
     dcat.py       rendering DCAT-AP from typed fields
     vocabularies.py  the controlled lists: licences, themes, classification
@@ -412,10 +449,10 @@ harness, **N2** token verification, **N3** subject resolver, **N4** tenancy, **N
 self-authentication.
 
 **M2, in progress:** **N5** resource registry, **N18** management authorization, **N7**
-sync client.
+sync client, **N12** `/.well-known/circuless-node`.
 
-Next: **N12** `/.well-known/circuless-node` and **N15** the NetBird client, then the
-remote dry run (Q3).
+Next: **N15** the NetBird client, then the remote dry run (Q3) on a machine outside BVR's
+network.
 
 Not yet built, and deliberately absent rather than stubbed: `decide()` (N6), uploads,
 and deletion. Deletion is two-stage (D25, N20 in M3), so there is no `DELETE` at all — a

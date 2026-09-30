@@ -52,6 +52,29 @@ class Settings(BaseSettings):
         description="Who runs this node. A BVR-operated node refuses sensitive data (D22).",
     )
 
+    # --- how to reach this node --------------------------------------------------------
+    # Advertised by /.well-known/circuless-node (N12). Clients try the overlay first and
+    # fall back to the gateway, so a client that can install a NetBird agent never
+    # traverses the Cloud at all (§5.6).
+    #
+    # Configured here rather than learned from the Cloud, because this document is what
+    # somebody reads while trying to reach a node that is having trouble — and a node
+    # that could not describe itself until the Cloud told it how would be least useful
+    # exactly then. The gateway address is therefore in two places, here and in the
+    # Cloud's node registry that C3 generates routes from; they are reconciled by C12's
+    # configuration rather than by either side guessing.
+    overlay_base_url: str | None = Field(
+        default=None,
+        description="This node's address on the CIRCULess overlay, e.g. "
+        "https://100.x.y.z:8000. Preferred by clients that can reach it.",
+    )
+    gateway_base_url: str | None = Field(
+        default=None,
+        description="This node's public address through the Cloud gateway, e.g. "
+        "https://alpha.nodes.circuless.eu. The fallback for browsers and for clients "
+        "that cannot join the overlay.",
+    )
+
     # --- storage ----------------------------------------------------------------------
     database_url: str = Field(
         default="sqlite:///./data/node.db",

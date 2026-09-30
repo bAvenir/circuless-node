@@ -11,7 +11,12 @@ from __future__ import annotations
 import pytest
 from starlette.testclient import TestClient
 
-from circuless_node.app import API_PREFIX, create_internal_app, create_public_app
+from circuless_node.app import (
+    API_PREFIX,
+    UNVERSIONED_PATHS,
+    create_internal_app,
+    create_public_app,
+)
 from circuless_node.settings import Settings
 
 from .harness.routes import route_paths, route_table
@@ -26,7 +31,11 @@ def test_every_public_route_is_under_v1(settings: Settings) -> None:
     assert routes, (
         "nothing to check — see test_route_auth.test_the_public_app_serves_at_least_one_route"
     )
-    offenders = [path for _, path in routes if not path.startswith(API_PREFIX)]
+    offenders = [
+        path
+        for _, path in routes
+        if not path.startswith(API_PREFIX) and path not in UNVERSIONED_PATHS
+    ]
     assert offenders == [], (
         f"routes outside {API_PREFIX}: {offenders}. Every Node API route carries the prefix "
         "(D24); the only exceptions are /.well-known/circuless-node and the internal app."
@@ -97,3 +106,15 @@ def test_cors_ignores_an_unlisted_origin(settings: Settings) -> None:
 def test_audience_is_derived_from_the_node_id(settings: Settings) -> None:
     """N2 accepts exactly this audience and nothing else."""
     assert settings.audience == "node:test-node"
+
+
+def test_the_unversioned_exemption_is_what_we_think_it_is(settings: Settings) -> None:
+    """Guards the exemption itself.
+
+    `UNVERSIONED_PATHS` is the only way a public route escapes `/v1` (invariant 1), so it
+    should be small and changing it should fail a test before it reaches a review. The
+    second assertion matters as much as the first: an exemption for a path the app does
+    not serve is a stale entry that quietly widens the rule.
+    """
+    assert {"/.well-known/circuless-node"} == UNVERSIONED_PATHS
+    assert route_paths(create_public_app(settings)) >= UNVERSIONED_PATHS
