@@ -118,3 +118,50 @@ def test_the_unversioned_exemption_is_what_we_think_it_is(settings: Settings) ->
     """
     assert {"/.well-known/circuless-node"} == UNVERSIONED_PATHS
     assert route_paths(create_public_app(settings)) >= UNVERSIONED_PATHS
+
+
+def test_the_overlay_stack_publishes_no_host_port() -> None:
+    """The whole reason for the sidecar (N15).
+
+    The node shares the NetBird agent's network namespace so that the WireGuard
+    interface, and the node's sockets with it, exist only inside that pair. A `ports:`
+    section anywhere in that file undoes it — and adding one while debugging is a single
+    line that nothing else here would notice.
+
+    Asserted against the file rather than a running stack: this has to fail in CI, on a
+    machine with no Docker daemon and no setup key.
+    """
+    import pathlib
+
+    import yaml
+
+    compose = pathlib.Path(__file__).resolve().parent.parent / "deploy" / "docker-compose.yml"
+    document = yaml.safe_load(compose.read_text())
+
+    published = {
+        name: service["ports"]
+        for name, service in document["services"].items()
+        if isinstance(service, dict) and service.get("ports")
+    }
+    assert published == {}, (
+        f"deploy/docker-compose.yml publishes host ports: {published}. The node is "
+        "reachable over the overlay and nowhere else; publishing a port puts it on the "
+        "host's network, which is what the sidecar exists to prevent."
+    )
+
+
+def test_the_node_container_shares_the_agents_namespace() -> None:
+    """The other half of the same property, and the easier one to lose in a refactor.
+
+    Without `network_mode: service:netbird` the node gets its own namespace, the overlay
+    interface stays in the agent's, and the node becomes unreachable — at which point
+    the obvious fix is to publish a port.
+    """
+    import pathlib
+
+    import yaml
+
+    compose = pathlib.Path(__file__).resolve().parent.parent / "deploy" / "docker-compose.yml"
+    document = yaml.safe_load(compose.read_text())
+
+    assert document["services"]["node"]["network_mode"] == "service:netbird"

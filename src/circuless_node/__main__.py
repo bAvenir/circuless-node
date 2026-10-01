@@ -4,7 +4,10 @@
     circuless-node certificate     print this node's certificate, for registration
     circuless-node check           confirm the node can authenticate to the Cloud
 
-Installed as `uvx circuless-node==<version>`, always pinned.
+Shipped as a container image, pinned by digest and signed with cosign (O18, N15). A
+node runs it beside a NetBird agent whose network namespace it shares, so the overlay
+interface — and the node's sockets with it — exist only inside that pair and nothing is
+published to the host. See `deploy/README.md`.
 """
 
 from __future__ import annotations

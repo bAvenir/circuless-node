@@ -1,0 +1,22 @@
+# Keep the build context to what the Dockerfile actually copies.
+#
+# Correctness first: `data/` holds a node's private key, its database and its tenants'
+# content. It is gitignored, so it never reaches a commit — but a build context is not a
+# commit, and without this line a developer building locally would send their key to the
+# daemon and, with a careless `COPY . .`, into a layer of a published image.
+data/
+deploy/secrets/
+.env
+*.env
+
+.git/
+.github/
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+tests/
+migrations/versions/__pycache__/

@@ -1,0 +1,137 @@
+# The node on the CIRCULess overlay (N15, D10, D34).
+#
+# Two containers, one network namespace. The NetBird agent owns the namespace; the node
+# joins it with `network_mode: service:netbird`, so the WireGuard interface exists only
+# in here. Three consequences, and they are the reason for this shape:
+#
+#   * the node publishes NO host port — there is no `ports:` section anywhere below, and
+#     a test asserts there never is;
+#   * nothing else on the machine is on the overlay, so a mistaken NetBird ACL exposes
+#     one container rather than the whole host;
+#   * the node's loopback is shared with the agent and with nothing else, which is what
+#     keeps `/healthz` and `/metrics` off the overlay while the healthcheck can still
+#     reach them.
+#
+# The alternative — the agent on the host — puts every listening service on the machine
+# within reach of any peer an ACL permits. On a partner's premises that is their whole
+# estate, which is not ours to risk.
+#
+# Read `../deploy/README.md` before running this. The NetBird server side (groups,
+# single-use keys, default-deny policies) is in the circuless-cloud repository, at
+# deploy/netbird/POLICIES.md.
+name: circuless-node
+
+services:
+  netbird:
+    # Pinned by digest (C16). The client's major version must match BVR's NetBird
+    # server; check before bumping, and resolve a new digest with
+    #   docker buildx imagetools inspect docker.io/netbirdio/netbird:<version>
+    image: docker.io/netbirdio/netbird:0.60.0@sha256:4953c2df4c4f935cfe65bf5b09c3fef40fe46831177039497d0046491b92d7ca
+    # The setup key is single-use and consumed on first start, so this file holds a
+    # credential that is live only until the peer registers. It is gitignored, and
+    # `README.md` says to delete it afterwards.
+    env_file:
+      - ./secrets/netbird.env
+    environment:
+      # Named after the node, so an operator approving peers in the console can tell
+      # which machine is asking.
+      NB_HOSTNAME: ${CIRCULESS_NODE_ID:?set CIRCULESS_NODE_ID in .env}
+    cap_add:
+      # The only capability WireGuard needs: create the interface and set routes.
+      # Deliberately not SYS_ADMIN, which some NetBird examples add for features this
+      # node does not use.
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    volumes:
+      # The peer's own key and state. Losing it means re-enrolling with a new setup key,
+      # which is survivable but means an operator approving a new peer.
+      - netbird-state:/var/lib/netbird
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+
+  # Applies the schema, then exits. A one-shot service rather than a line in the install
+  # guide: a node whose migrations were never run starts happily — liveness touches no
+  # database — and fails on the first real request, which is a poor way for a partner to
+  # discover they missed a step.
+  #
+  # Not on the agent's namespace: migrations only touch the local SQLite file, so this
+  # needs the data volume and nothing else.
+  migrate:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    working_dir: /app
+    entrypoint: ["alembic", "upgrade", "head"]
+    environment:
+      CIRCULESS_NODE_NODE_ID: ${CIRCULESS_NODE_ID:?set CIRCULESS_NODE_ID in .env}
+    volumes:
+      - node-data:/var/lib/circuless
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    security_opt: [no-new-privileges:true]
+    restart: "no"
+
+  node:
+    # Built locally until the first image release. `bvr-ci minor` publishes and
+    # cosign-signs it, after which this becomes:
+    #   image: reg.bavenir.eu/private/circuless-node:<version>@sha256:<digest>
+    # and a partner pulls a signed image rather than building one. The image-pinning
+    # check skips a service with `build:` precisely because there is no digest to pin.
+    build:
+      context: ..
+      dockerfile: Dockerfile
+
+    # The whole point. The node has no network of its own, no address of its own, and no
+    # published port — it lives on the agent's namespace and is reachable only over the
+    # overlay, subject to the NetBird ACL.
+    network_mode: "service:netbird"
+    depends_on:
+      netbird:
+        condition: service_started
+      migrate:
+        condition: service_completed_successfully
+
+    environment:
+      CIRCULESS_NODE_NODE_ID: ${CIRCULESS_NODE_ID:?set CIRCULESS_NODE_ID in .env}
+      CIRCULESS_NODE_ISSUER: ${CIRCULESS_NODE_ISSUER:?set CIRCULESS_NODE_ISSUER in .env}
+      CIRCULESS_NODE_CLOUD_API_URL: ${CIRCULESS_NODE_CLOUD_API_URL:?set CIRCULESS_NODE_CLOUD_API_URL in .env}
+      # A JSON list, and never `*` — the node refuses to start on a wildcard (G7).
+      # Empty string is not a list: pydantic-settings JSON-decodes this field, so the
+      # default has to be `[]` rather than blank.
+      CIRCULESS_NODE_CORS_ALLOW_ORIGINS: ${CIRCULESS_NODE_CORS_ALLOW_ORIGINS:-[]}
+      # Who runs this node. `bvr` is the default and refuses `classification=sensitive`
+      # (D22); a partner running their own data sets this to `partner`.
+      CIRCULESS_NODE_OPERATOR: ${CIRCULESS_NODE_OPERATOR:-bvr}
+      # Loopback, which inside this namespace means the node and the agent and nothing
+      # else. Binding it to the overlay address — so operators can reach /healthz and
+      # /metrics over the overlay, per the NetBird policy — arrives with the address
+      # detection in the next part of N15.
+      CIRCULESS_NODE_INTERNAL_HOST: 127.0.0.1
+      # Known gap, closing with the address detection in the next part of N15: the node
+      # binds 0.0.0.0, and this namespace also holds `eth0` on the Docker bridge — which
+      # it needs for outbound traffic to Keycloak and the Cloud API. So on a Linux host
+      # the node is reachable on its bridge address from the host and from containers on
+      # the same bridge. Not from the network, and not from the overlay's peers beyond
+      # what the ACL permits — but not nothing. Binding the public socket to the
+      # detected overlay address removes it.
+
+    volumes:
+      # Database, resource content, and the node's keypair and certificate. A named
+      # volume rather than a bind mount by default: the volume inherits the image's
+      # ownership, so the node's refusal to start on a loosely-permissioned private key
+      # (invariant 17) is satisfied without anyone running chown. A bind mount needs
+      # `chown 10001:10001` first — see README.md.
+      - node-data:/var/lib/circuless
+
+    read_only: true
+    tmpfs:
+      # SQLite and uvicorn want somewhere to write that is not the data directory.
+      - /tmp:size=64m,mode=1777
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+
+volumes:
+  netbird-state:
+  node-data:

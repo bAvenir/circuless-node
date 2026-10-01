@@ -303,6 +303,52 @@ redirect where the node fetches from.
 A's rows; it says nothing about whether this caller may act on tenant A at all. Every
 handler resolves the tenant and *then* calls `enforce_management`, in that order.
 
+## Running it on the overlay (N15)
+
+A node ships as a **container image**, pinned by digest and signed with cosign. That
+answers the packaging half of O18, and the reason is the overlay:
+
+```
+netbird container ──┐
+                    ├── one network namespace ── nothing published to the host
+node container   ───┘
+```
+
+The NetBird agent owns the namespace and the node joins it with
+`network_mode: service:netbird`, so the WireGuard interface exists only inside that pair.
+The node publishes **no host port**, and **nothing else on the machine is on the
+overlay** — a mistaken access rule exposes one container rather than a partner's estate.
+Running the agent on the host instead would put every listening service on the machine
+within reach of whichever peers the rules allow.
+
+Two structural tests hold that shape: `deploy/docker-compose.yml` must publish no ports,
+and the node must keep `network_mode: service:netbird`. Losing the second makes the node
+unreachable, and the obvious fix for that is to publish a port.
+
+`deploy/README.md` is the partner install guide. The NetBird server side — groups,
+single-use keys, default-deny rules, and keeping BVR's own routes and DNS away from
+CIRCULess peers — lives in the `circuless-cloud` repository at
+`deploy/netbird/POLICIES.md`.
+
+### Known gap, closing with the address detection
+
+The node binds `0.0.0.0` inside the namespace, which also holds `eth0` on the Docker
+bridge — needed for outbound traffic to Keycloak and the Cloud API. So on a Linux host
+the node is reachable on its bridge address from the host and from containers on the
+same bridge. Not from the network, and not from overlay peers beyond what the access
+rules permit, but not nothing. Binding the public socket to the detected overlay address
+removes it.
+
+### The private key and the image
+
+The key, the certificate, the database and the tenants' content all live in one volume at
+`/var/lib/circuless`, owned by uid **10001**. The node refuses to start if anyone else
+can read the key (invariant 17), so a named volume — which inherits the image's
+ownership — is the default; a bind mount needs `chown 10001:10001` first.
+
+`data/` is in `.dockerignore` for the same reason. It is gitignored, so it never reaches
+a commit, but a build context is not a commit.
+
 ## What a node says about itself (N12)
 
 ```sh
@@ -418,6 +464,7 @@ src/circuless_node/
     storage.py    fsspec adapter, and path confinement
     errors.py     reason codes — one enum, no free text
 migrations/       Alembic, from the first model
+deploy/           the overlay stack: Dockerfile lives at the root, compose and guide here
 tests/
 ```
 
@@ -451,8 +498,10 @@ self-authentication.
 **M2, in progress:** **N5** resource registry, **N18** management authorization, **N7**
 sync client, **N12** `/.well-known/circuless-node`.
 
-Next: **N15** the NetBird client, then the remote dry run (Q3) on a machine outside BVR's
-network.
+**N15** in progress: the image, the overlay stack and the install guide are here;
+overlay address detection and `check` reporting it are next.
+
+Then the remote dry run (Q3) on a machine outside BVR's network.
 
 Not yet built, and deliberately absent rather than stubbed: `decide()` (N6), uploads,
 and deletion. Deletion is two-stage (D25, N20 in M3), so there is no `DELETE` at all — a
