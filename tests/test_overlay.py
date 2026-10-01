@@ -81,7 +81,36 @@ def test_the_docker_bridge_is_not_mistaken_for_the_overlay(interfaces) -> None:
 
 def test_the_url_carries_the_public_port(interfaces) -> None:
     interfaces("100.92.1.7")
-    assert overlay.overlay_base_url(8000) == "https://100.92.1.7:8000"
+    assert overlay.overlay_base_url(8000) == "http://100.92.1.7:8000"
+
+
+def test_the_overlay_url_is_http_not_https(interfaces) -> None:
+    """D28: TLS on publicly reachable endpoints, WireGuard on the overlay.
+
+    The node terminates no TLS on either socket, so advertising `https` sends a client
+    following §5.6's "try overlay first" into a TLS handshake against a plain socket.
+
+    Pinned as its own test because it reads like a typo waiting to be helpfully
+    corrected. It was `https` until the Q3 dry run measured both halves: a 200 over
+    `http://100.98.65.67:8000`, while the document advertised `https` for that same
+    address.
+    """
+    interfaces("100.92.1.7")
+    assert overlay.overlay_base_url(8000).startswith("http://")
+
+
+def test_an_explicit_override_is_published_verbatim(interfaces, tmp_path) -> None:
+    """Including its scheme. An override exists for what detection cannot know about —
+    a relay, or an address something else terminates TLS for — so the node must not
+    rewrite it to match its own socket."""
+    interfaces("100.92.1.7")
+    settings = Settings(  # type: ignore[call-arg]
+        node_id="n",
+        overlay_base_url="https://relay.example:443",
+        data_dir=tmp_path,
+        database_url=f"sqlite:///{tmp_path / 'n.db'}",
+    )
+    assert settings.effective_overlay_base_url == "https://relay.example:443"
 
 
 def test_no_url_without_an_address(interfaces) -> None:
@@ -104,7 +133,7 @@ def test_the_detected_address_is_published(interfaces, tmp_path) -> None:
     settings = Settings(  # type: ignore[call-arg]
         node_id="n", data_dir=tmp_path, database_url=f"sqlite:///{tmp_path / 'n.db'}"
     )
-    assert settings.effective_overlay_base_url == "https://100.92.1.7:8000"
+    assert settings.effective_overlay_base_url == "http://100.92.1.7:8000"
 
 
 def test_the_setting_overrides_detection(interfaces, tmp_path) -> None:
@@ -139,4 +168,4 @@ def test_it_is_not_cached(interfaces, tmp_path) -> None:
     assert settings.effective_overlay_base_url is None
 
     interfaces("100.92.1.7")
-    assert settings.effective_overlay_base_url == "https://100.92.1.7:8000"
+    assert settings.effective_overlay_base_url == "http://100.92.1.7:8000"

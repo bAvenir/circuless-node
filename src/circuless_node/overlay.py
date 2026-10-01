@@ -61,9 +61,23 @@ def detect_overlay_address() -> str | None:
 
 
 def overlay_base_url(port: int) -> str | None:
-    """The detected address as a URL the `/.well-known` document can publish."""
+    """The detected address as a URL the `/.well-known` document can publish.
+
+    **`http`, not `https`.** The node terminates no TLS on either socket, and on the
+    overlay it does not need to: D28 says every hop is encrypted "with TLS on every
+    publicly reachable endpoint, and WireGuard on the overlay", and §3 adds that
+    overlay-only endpoints rely on WireGuard, with per-node certificates as the
+    final-version path. The gateway endpoint stays `https` because Traefik terminates
+    TLS where the public internet can reach it.
+
+    This said `https` until the Q3 dry run, which settled it by measurement rather than
+    by reading: a request to `http://100.98.65.67:8000/v1/whoami` over the overlay
+    returned 200, while the document was advertising the same endpoint as `https`. A
+    client following §5.6's "try overlay first" would have attempted TLS against a plain
+    socket and fallen back to the gateway — if there was one — or simply failed.
+    """
     address = detect_overlay_address()
-    return f"https://{address}:{port}" if address else None
+    return f"http://{address}:{port}" if address else None
 
 
 def _local_addresses() -> list[str]:

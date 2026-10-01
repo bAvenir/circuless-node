@@ -336,8 +336,11 @@ CIRCULess peers — lives in the `circuless-cloud` repository at
 asking each interface with `ioctl(SIOCGIFADDR)`. No NetBird binary — the agent is in the
 *other* container — and no iproute2, which the runtime image deliberately lacks.
 
-That address is what `/.well-known` publishes, so a node cannot advertise an address it
-is not on. `CIRCULESS_NODE_OVERLAY_BASE_URL` overrides it for what detection cannot know
+That address is what `/.well-known` publishes — as **`http://`**, not `https`. The node
+terminates no TLS on either socket, and on the overlay it does not need to: D28 encrypts
+that hop with WireGuard and reserves TLS for publicly reachable endpoints, which is what
+the gateway URL is for. So a node cannot advertise an address it is not on, nor a scheme
+it does not speak. `CIRCULESS_NODE_OVERLAY_BASE_URL` overrides it for what detection cannot know
 about, and `check` warns if the override disagrees with the interface.
 
 The first implementation used `getaddrinfo(interface_name)`, which is not a thing: it

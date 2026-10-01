@@ -23,10 +23,11 @@ name: circuless-node
 
 services:
   netbird:
-    # Pinned by digest (C16). The client's major version must match BVR's NetBird
-    # server; check before bumping, and resolve a new digest with
+    # Pinned by digest (C16), and kept in step with BVR's NetBird server — 0.71.4 at the
+    # time of the Q3 dry run, where the client was found eleven minor versions behind.
+    # Check the server's version before bumping, and resolve a new digest with
     #   docker buildx imagetools inspect docker.io/netbirdio/netbird:<version>
-    image: docker.io/netbirdio/netbird:0.60.0@sha256:4953c2df4c4f935cfe65bf5b09c3fef40fe46831177039497d0046491b92d7ca
+    image: docker.io/netbirdio/netbird:0.71.4@sha256:c4195811bf9999544db5176950a0d6513c880d0195450b59eb156c254e0dd3b5
     # The setup key is single-use and consumed on first start, so this file holds a
     # credential that is live only until the peer registers. It is gitignored, and
     # `README.md` says to delete it afterwards.

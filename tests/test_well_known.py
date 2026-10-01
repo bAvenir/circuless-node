@@ -209,7 +209,7 @@ def test_a_detected_overlay_address_is_published(
     )
     document = node_document(settings)
     assert document["endpoints"] == [
-        {"kind": "overlay", "url": "https://100.92.1.7:8000"},
+        {"kind": "overlay", "url": "http://100.92.1.7:8000"},
         {"kind": "gateway", "url": "https://n1.nodes.circuless.eu"},
     ]
 
