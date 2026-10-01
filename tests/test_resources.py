@@ -441,3 +441,49 @@ def test_the_push_flag_is_node_global_and_not_tenant_filtered(
 
 def _tenant_id(session: Session, slug: str) -> uuid.UUID:
     return session.exec(select(Tenant).where(Tenant.slug == slug)).one().id
+
+
+# --- `public` is reserved for later (D21, design §5.2) -------------------------------------
+
+
+def test_public_discoverability_is_refused(client: TestClient, admin: dict[str, str]) -> None:
+    """`public` means discoverable *anonymously*, and the beta has no anonymous access.
+
+    Accepting it would record an intention the platform cannot act on, and the owner
+    would believe they had published more widely than they had.
+    """
+    response = client.post(
+        "/v1/t/alpha/resources",
+        headers=admin,
+        json={**DATASET, "licence": "CC-BY-4.0", "discoverability": "public"},
+    )
+    assert response.status_code == 422
+    assert response.json()["reason"] == "unsupported"
+
+
+def test_patching_to_public_is_refused_too(client: TestClient, admin: dict[str, str]) -> None:
+    """The rule is checked against the resulting state, like the licence rule — so a
+    two-step route to `public` closes with it."""
+    created = client.post(
+        "/v1/t/alpha/resources",
+        headers=admin,
+        json={**DATASET, "licence": "CC-BY-4.0", "discoverability": "catalogue"},
+    ).json()
+    response = client.patch(
+        f"/v1/t/alpha/resources/{created['id']}",
+        headers=admin,
+        json={"discoverability": "public"},
+    )
+    assert response.status_code == 422
+
+
+def test_catalogue_discoverability_is_still_accepted(
+    client: TestClient, admin: dict[str, str]
+) -> None:
+    """The replacement, and what §5.2 says every authenticated participant can see."""
+    response = client.post(
+        "/v1/t/alpha/resources",
+        headers=admin,
+        json={**DATASET, "licence": "CC-BY-4.0", "discoverability": "catalogue"},
+    )
+    assert response.status_code == 201

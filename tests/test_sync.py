@@ -151,9 +151,11 @@ def test_a_failed_push_keeps_the_mark(session: Session) -> None:
 
     cloud = FakeCloud()
     cloud.fail_on = {"push"}
-    tick(session, cloud, SyncState(), node_id="test-node", now=NOW)
+    state = SyncState()
+    tick(session, cloud, state, node_id="test-node", now=NOW)
 
     assert session.exec(select(CataloguePush)).all() != []
+    assert state.consecutive_push_failures == 1
 
 
 def test_only_published_resources_are_sent(session: Session) -> None:
@@ -168,7 +170,7 @@ def test_only_published_resources_are_sent(session: Session) -> None:
     add_resource(
         session,
         slug="restricted",
-        discoverability=Discoverability.PUBLIC,
+        discoverability=Discoverability.CATALOGUE,
         visibility=Visibility.PRIVATE,
     )
     session.add(CataloguePush(tenant_id=ALPHA))
@@ -290,8 +292,8 @@ def test_a_failed_pull_leaves_the_cache_intact(session: Session) -> None:
     tick(session, cloud, state, node_id="test-node", now=NOW)
 
     assert len(session.exec(select(AgreementCache)).all()) == 1
-    assert state.consecutive_failures == 1
-    assert state.last_success_at is None
+    assert state.consecutive_pull_failures == 1
+    assert state.last_pull_at is None
 
 
 def test_a_failure_does_not_raise(session: Session) -> None:
@@ -308,20 +310,20 @@ def test_failures_accumulate_and_a_success_clears_them(session: Session) -> None
     cloud.fail_on = {"pull"}
     tick(session, cloud, state, node_id="test-node", now=NOW)
     tick(session, cloud, state, node_id="test-node", now=NOW)
-    assert state.consecutive_failures == 2
+    assert state.consecutive_pull_failures == 2
 
     cloud.fail_on = set()
     tick(session, cloud, state, node_id="test-node", now=NOW)
-    assert state.consecutive_failures == 0
-    assert state.last_error is None
+    assert state.consecutive_pull_failures == 0
+    assert state.last_pull_error is None
 
 
 def test_an_error_is_truncated(session: Session) -> None:
     """It reaches /metrics and the logs. An upstream error string can carry a URL, a
     hostname, or a fragment of something that should not travel."""
     state = SyncState()
-    state.failed("x" * 5000, now=NOW)
-    assert len(state.last_error) <= 200
+    state.pull_failed("x" * 5000, now=NOW)
+    assert len(state.last_pull_error) <= 200
 
 
 # --- the heartbeat --------------------------------------------------------------------------
@@ -352,7 +354,7 @@ def test_metrics_report_minus_one_before_the_first_success() -> None:
 
 def test_metrics_report_the_age_of_the_cache() -> None:
     state = SyncState()
-    state.succeeded(agreements=3, now=NOW - dt.timedelta(minutes=5))
+    state.pull_succeeded(agreements=3, now=NOW - dt.timedelta(minutes=5))
     text = sync.metrics_text(state, now=NOW)
     assert "circuless_node_sync_age_seconds 300" in text
     assert "circuless_node_agreements_cached 3" in text
@@ -360,9 +362,9 @@ def test_metrics_report_the_age_of_the_cache() -> None:
 
 def test_metrics_report_consecutive_failures() -> None:
     state = SyncState()
-    state.failed("nope", now=NOW)
-    state.failed("nope", now=NOW)
-    assert "circuless_node_sync_failures_total 2" in sync.metrics_text(state, now=NOW)
+    state.pull_failed("nope", now=NOW)
+    state.pull_failed("nope", now=NOW)
+    assert "circuless_node_pull_failures_total 2" in sync.metrics_text(state, now=NOW)
 
 
 # --- what the internal socket exposes -------------------------------------------------------
@@ -381,7 +383,7 @@ def test_healthz_stays_200_when_the_cache_is_stale(settings) -> None:
     from circuless_node.app import create_internal_app
 
     app = create_internal_app(settings)
-    app.state.sync_state.failed("cloud unreachable", now=NOW)
+    app.state.sync_state.pull_failed("cloud unreachable", now=NOW)
 
     response = TestClient(app).get("/healthz")
     assert response.status_code == 200
@@ -395,7 +397,7 @@ def test_metrics_expose_the_sync_state(settings) -> None:
     from circuless_node.app import create_internal_app
 
     app = create_internal_app(settings)
-    app.state.sync_state.succeeded(agreements=2, now=NOW - dt.timedelta(seconds=90))
+    app.state.sync_state.pull_succeeded(agreements=2, now=NOW - dt.timedelta(seconds=90))
 
     body = TestClient(app).get("/metrics").text
     assert "circuless_node_sync_age_seconds" in body
@@ -431,5 +433,143 @@ def test_a_node_whose_certificate_is_not_registered_still_serves(
     state = SyncState()
     tick(session, cloud, state, node_id="test-node", now=NOW)  # must not raise
 
-    assert state.consecutive_failures == 1
-    assert state.last_success_at is None
+    assert state.consecutive_pull_failures == 1
+    assert state.last_pull_at is None
+
+
+def test_a_public_record_is_never_pushed(session: Session) -> None:
+    """`public` is not available in the beta (§5.2) and the Cloud's catalogue refuses it.
+
+    `resources.py` no longer lets one be created, so this can only be a record from
+    before that rule — written directly here, as a node upgraded in place would have.
+    Pushing it would be refused, and a refused push stops `tick()` before the pull, so
+    one stale record would wedge agreement synchronisation indefinitely.
+    """
+    add_resource(session, slug="legacy", discoverability=Discoverability.PUBLIC)
+    session.add(CataloguePush(tenant_id=ALPHA))
+    session.commit()
+
+    cloud = FakeCloud()
+    tick(session, cloud, SyncState(), node_id="test-node", now=NOW)
+
+    assert cloud.pushed[0][1] == [], "a public record must not reach the Cloud"
+
+
+# --- a failed push must not stop the pull ---------------------------------------------
+
+
+def test_a_failed_push_does_not_stop_the_pull(session: Session) -> None:
+    """The one that matters.
+
+    Push and pull fail for different reasons and cost different things. Until this was
+    fixed, a push the Cloud refused returned before the pull — so a single record the
+    Cloud would not accept, or a tenant an operator had removed from the node registry,
+    stopped agreements arriving indefinitely while the node went on enforcing from a
+    cache nobody was updating. A node may be behind on what it advertises; it must not
+    silently fall behind on what it permits.
+    """
+    add_resource(session)
+    session.add(CataloguePush(tenant_id=ALPHA))
+    session.commit()
+
+    cloud = FakeCloud({"org_map": [], "agreements": [agreement()]})
+    cloud.fail_on = {"push"}
+    state = SyncState()
+    tick(session, cloud, state, node_id="test-node", now=NOW)
+
+    assert len(session.exec(select(AgreementCache)).all()) == 1, "the pull must still run"
+    assert state.consecutive_push_failures == 1
+    assert state.consecutive_pull_failures == 0
+    assert state.last_pull_at == NOW
+
+
+def test_a_node_failing_only_its_pushes_is_not_stale(session: Session) -> None:
+    """Staleness means enforcement staleness.
+
+    Reporting one number for both exchanges would say this node is stale when its
+    agreements are current and only its catalogue entries are behind — which is the
+    opposite of the truth, and the number someone pages on.
+    """
+    cloud = FakeCloud()
+    cloud.fail_on = {"push"}
+    state = SyncState()
+    add_resource(session)
+    session.add(CataloguePush(tenant_id=ALPHA))
+    session.commit()
+
+    tick(session, cloud, state, node_id="test-node", now=NOW)
+
+    assert state.seconds_since_pull(NOW) == 0
+    assert "circuless_node_sync_age_seconds 0" in sync.metrics_text(state, now=NOW)
+    assert "circuless_node_push_failures_total 1" in sync.metrics_text(state, now=NOW)
+
+
+def test_a_failed_pull_still_skips_the_heartbeat(session: Session) -> None:
+    """It says "this node completed a pass", and a pass without agreements did not."""
+    cloud = FakeCloud()
+    cloud.fail_on = {"pull"}
+    tick(session, cloud, SyncState(), node_id="test-node", now=NOW)
+    assert cloud.heartbeats == []
+
+
+def test_a_failed_heartbeat_does_not_discard_a_good_pull(session: Session) -> None:
+    """Nothing this node decides depends on the heartbeat. Failing the pass over it
+    would hide a pull that worked, and the pull is the part that matters."""
+    cloud = FakeCloud({"org_map": [], "agreements": [agreement()]})
+    cloud.fail_on = {"heartbeat"}
+    state = SyncState()
+    tick(session, cloud, state, node_id="test-node", now=NOW)
+
+    assert state.last_pull_at == NOW
+    assert state.consecutive_pull_failures == 0
+    assert len(session.exec(select(AgreementCache)).all()) == 1
+
+
+def test_a_pull_success_does_not_erase_a_push_failure(session: Session) -> None:
+    """One error field for both exchanges would have the good news erase the bad.
+
+    A node whose pushes are failing and whose pulls are fine is a real state, and the
+    push error is the only record of why its catalogue entries are going stale.
+    """
+    add_resource(session)
+    session.add(CataloguePush(tenant_id=ALPHA))
+    session.commit()
+
+    cloud = FakeCloud()
+    cloud.fail_on = {"push"}
+    state = SyncState()
+    tick(session, cloud, state, node_id="test-node", now=NOW)
+
+    assert state.last_push_error is not None
+    assert state.last_pull_error is None
+
+
+async def test_the_loop_records_an_unexpected_error_rather_than_dying(tmp_path) -> None:
+    """The loop's own safety net, which was broken and untested.
+
+    `tick()` swallows CloudError, so anything reaching the loop's handler is a bug — and
+    the handler called a method that no longer existed, so it would have raised
+    AttributeError and killed the sync task. Through `asyncio.gather` in `_serve`, that
+    takes both servers with it: a node that stops answering because of a malformed sync
+    feed.
+    """
+    import asyncio
+
+    from circuless_node.settings import Settings
+    from circuless_node.sync import sync_loop
+
+    settings = Settings(  # type: ignore[call-arg]
+        node_id="test-node",
+        data_dir=tmp_path,
+        database_url=f"sqlite:///{tmp_path / 'n.db'}",
+    )
+    state = SyncState()
+    # `engine=None` makes `_one_pass` raise something that is not a CloudError, which is
+    # exactly the path the handler exists for.
+    task = asyncio.create_task(sync_loop(settings, None, state, interval=0.01))
+    await asyncio.sleep(0.2)
+    assert not task.done(), "the loop died instead of recording the error"
+    task.cancel()
+
+    assert state.consecutive_pull_failures > 0
+    assert "sync loop" in (state.last_pull_error or "")

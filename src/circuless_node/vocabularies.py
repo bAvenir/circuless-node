@@ -75,6 +75,14 @@ class Discoverability(StrEnum):
 
     HIDDEN = "hidden"
     CATALOGUE = "catalogue"
+
+    #: **Not available in the beta** (design §5.2) — `resources.py` refuses it.
+    #:
+    #: It is reserved rather than wrong: `public` is meant to mean discoverable
+    #: *anonymously*, and D21 allows no anonymous access at all, so there is nothing for
+    #: it to mean yet. The member stays so that the day anonymous discovery arrives it
+    #: is added rather than redefined — and so that a record carrying it, from a node
+    #: older than this rule, is recognised rather than unparseable.
     PUBLIC = "public"
 
 

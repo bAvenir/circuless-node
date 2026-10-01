@@ -265,6 +265,7 @@ otherwise.
 | | |
 |---|---|
 | Defaults are closed (NFR4) | a new resource is `discoverability=hidden`, `visibility=org` |
+| `discoverability=public` is refused | reserved for later (§5.2): it means discoverable *anonymously*, and D21 allows no anonymous access, so there is nothing for it to mean yet |
 | A licence is required to publish (NFR9) | from `vocabularies.LICENCES`, checked against the *resulting* state so a two-step publish cannot slip past |
 | A BVR-operated node refuses `sensitive` (D22) | and `operator` defaults to `bvr`, so the permissive value is the one somebody has to type |
 
@@ -444,10 +445,21 @@ all be stale together. Staleness belongs on `/metrics`, where it is an alert rat
 an eviction:
 
 ```
-circuless_node_sync_age_seconds      seconds since this process last synced, or -1
-circuless_node_sync_failures_total   consecutive failures
+circuless_node_sync_age_seconds      seconds since this process last PULLED, or -1
+circuless_node_pull_failures_total   consecutive failed agreement pulls
+circuless_node_push_failures_total   consecutive failed catalogue pushes
 circuless_node_agreements_cached     agreements currently enforced
 ```
+
+**Push and pull are tracked separately, and only the pull is staleness.** The pull
+carries agreements, which is what `decide()` enforces from; the push carries catalogue
+metadata, which only affects what others can discover. Alert on the pull; a rising push
+counter is a ticket.
+
+A failed push does not stop the pull. It used to: one record the Cloud would not
+accept — or a tenant an operator removed from the node registry — returned before the
+pull and left the node enforcing from a cache nobody was updating, indefinitely, while
+reporting a failure nobody reads as "enforcement is frozen".
 
 `sync_age_seconds` is the age of **this process's** last success, not of the cache — the
 state is held in memory, so a restart resets it while the cache in the database survives.

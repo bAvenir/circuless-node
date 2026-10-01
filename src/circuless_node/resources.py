@@ -183,6 +183,7 @@ def resource_router() -> APIRouter:
             discoverability = body.discoverability or Discoverability.HIDDEN
             visibility = body.visibility or Visibility.ORG
             _check_classification(settings, body.classification)
+            _check_discoverability(discoverability)
             _check_licence(body.licence, discoverability)
 
             with tenant_scope(session, tenant.id):
@@ -273,6 +274,7 @@ def resource_router() -> APIRouter:
                 # using the licence already there, and one that only clears the licence
                 # has to satisfy it against the discoverability already there.
                 _check_classification(settings, resource.classification)
+                _check_discoverability(resource.discoverability)
                 _check_licence(resource.licence, resource.discoverability)
 
                 resource.updated_at = datetime.now(UTC)
@@ -300,6 +302,27 @@ def _check_classification(settings: Settings, classification: Classification) ->
             422,
             Reason.CLASSIFICATION_NOT_PERMITTED,
             "this node does not hold sensitive data; register it on your own node",
+        )
+
+
+def _check_discoverability(discoverability: Discoverability) -> None:
+    """D21, design §5.2. `public` is reserved for later and is not available now.
+
+    `public` means discoverable *anonymously*, and the beta has no anonymous access at
+    all — so accepting it would record an intention the platform cannot act on, and the
+    owner would believe they had published more widely than they had.
+
+    Refused here as well as at the Cloud's catalogue (C5), deliberately. Here, because a
+    provider should be told at the moment they ask rather than discovering 30 seconds
+    later that a push they cannot see was refused. There, because the Cloud should not
+    depend on every node running a version that knows this rule.
+    """
+    if discoverability is Discoverability.PUBLIC:
+        raise NodeError(
+            422,
+            Reason.UNSUPPORTED,
+            "discoverability 'public' is reserved for later and is not available in "
+            "the beta; use 'catalogue', which every authenticated participant can see",
         )
 
 

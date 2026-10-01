@@ -68,50 +68,87 @@ SYNC_INTERVAL_SECONDS = 30.0
 #: Resources a node publishes. `hidden` is the default and means "not advertised
 #: anywhere" (NFR4), so it never reaches the Cloud — the catalogue filters on
 #: discoverability and never on visibility, and this is the node's half of that.
-PUBLISHED = (Discoverability.CATALOGUE, Discoverability.PUBLIC)
+#:
+#: `public` is **not** here. It is not available in the beta (design §5.2), the Cloud's
+#: catalogue refuses a record carrying it, and `resources.py` no longer lets one be
+#: created. A record from before that rule would otherwise be pushed, refused, and —
+#: because a failed push stops `tick()` before the pull — would wedge agreement
+#: synchronisation indefinitely over a discovery problem.
+PUBLISHED = (Discoverability.CATALOGUE,)
 
 
 # --- what the node knows about its own syncing -------------------------------------------
 
 
+def _redacted(error: str) -> str:
+    """Truncated. It reaches the logs but never a response body — an upstream error
+    string can carry a URL, a hostname or a fragment of something that should not
+    travel."""
+    return error[:200]
+
+
 @dataclass
 class SyncState:
-    """Liveness of the cache, held in memory.
+    """Liveness of the two exchanges, held in memory.
+
+    **Push and pull are tracked separately, because they matter differently.** The pull
+    carries agreements, which is what `decide()` enforces from; the push carries
+    catalogue metadata, which only affects what other people can discover. Discovery
+    going stale is cosmetic. Enforcement going stale is not.
+
+    So `last_pull_at` is what staleness means, and a node whose pushes are all failing
+    while its pulls succeed is **not** stale — it is a node with a publishing problem.
+    Reporting one number for both would have said the opposite.
 
     In memory by decision, with one consequence worth knowing: a restart resets it, so a
-    node that comes back up during a Cloud outage reports "never synced" while it is in
+    node that comes back up during a Cloud outage reports "never pulled" while it is in
     fact enforcing from a cache that survived in the database. The age of the process,
-    not the age of the data. `/metrics` names the counter accordingly so nobody reads it
-    as the latter.
+    not the age of the data. `/metrics` names the counter accordingly.
     """
 
-    last_success_at: dt.datetime | None = None
+    last_pull_at: dt.datetime | None = None
+    last_push_at: dt.datetime | None = None
     last_attempt_at: dt.datetime | None = None
-    last_error: str | None = None
-    consecutive_failures: int = 0
+    last_pull_error: str | None = None
+    last_push_error: str | None = None
+    consecutive_pull_failures: int = 0
+    consecutive_push_failures: int = 0
     agreements_cached: int = 0
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
-    def succeeded(self, *, agreements: int, now: dt.datetime) -> None:
+    def pull_succeeded(self, *, agreements: int, now: dt.datetime) -> None:
         with self._lock:
-            self.last_success_at = now
+            self.last_pull_at = now
             self.last_attempt_at = now
-            self.last_error = None
-            self.consecutive_failures = 0
+            self.consecutive_pull_failures = 0
+            # Cleared by its own success only. A pull that worked says nothing about a
+            # push that did not, and one field for both would erase the other's news.
+            self.last_pull_error = None
             self.agreements_cached = agreements
 
-    def failed(self, error: str, *, now: dt.datetime) -> None:
+    def push_succeeded(self, *, now: dt.datetime) -> None:
+        with self._lock:
+            self.last_push_at = now
+            self.last_attempt_at = now
+            self.consecutive_push_failures = 0
+            self.last_push_error = None
+
+    def pull_failed(self, error: str, *, now: dt.datetime) -> None:
         with self._lock:
             self.last_attempt_at = now
-            # Truncated, and it reaches /metrics and the logs but never a response body:
-            # an upstream error string can carry a URL, a hostname or a token fragment.
-            self.last_error = error[:200]
-            self.consecutive_failures += 1
+            self.last_pull_error = _redacted(error)
+            self.consecutive_pull_failures += 1
 
-    def seconds_since_success(self, now: dt.datetime) -> float | None:
-        if self.last_success_at is None:
+    def push_failed(self, error: str, *, now: dt.datetime) -> None:
+        with self._lock:
+            self.last_attempt_at = now
+            self.last_push_error = _redacted(error)
+            self.consecutive_push_failures += 1
+
+    def seconds_since_pull(self, now: dt.datetime) -> float | None:
+        if self.last_pull_at is None:
             return None
-        return (now - self.last_success_at).total_seconds()
+        return (now - self.last_pull_at).total_seconds()
 
 
 # --- talking to the Cloud -------------------------------------------------------------------
@@ -193,19 +230,42 @@ def tick(
     The heartbeat goes last: it says "this node completed a pass", which is more useful
     than "this node started one".
 
-    A failure in any step marks the state and returns. It does not raise: the loop's job
-    is to run again in thirty seconds, and a node that stopped syncing because the Cloud
-    was briefly down would need a restart to recover.
+    **A failed push does not stop the pull.** They fail for different reasons and cost
+    different things — see `SyncState`.
+
+    Nothing here raises: the loop's job is to run again in thirty seconds, and a node
+    that stopped syncing because the Cloud was briefly down would need a restart to
+    recover.
     """
     now = now or dt.datetime.now(dt.UTC)
+
+    # Each exchange is attempted independently. A failed push used to return before the
+    # pull, so one record the Cloud would not accept — a `public` discoverability, or a
+    # tenant an operator removed from the node registry — stopped agreements arriving
+    # indefinitely, while the node went on enforcing from a cache nobody was updating.
+    # That inverts F16's priority: a node may be behind on what it advertises, and must
+    # not silently fall behind on what it permits.
     try:
         push_dirty_catalogues(session, cloud, node_id=node_id)
+        state.push_succeeded(now=now)
+    except CloudError as failure:
+        state.push_failed(str(failure), now=now)
+
+    try:
         agreements = pull_sync_feed(session, cloud, now=now)
+        state.pull_succeeded(agreements=agreements, now=now)
+    except CloudError as failure:
+        state.pull_failed(str(failure), now=now)
+        # No heartbeat: it says "this node completed a pass", and this one did not.
+        return
+
+    try:
         cloud.heartbeat(version)
     except CloudError as failure:
-        state.failed(str(failure), now=now)
-        return
-    state.succeeded(agreements=agreements, now=now)
+        # Recorded and otherwise tolerated. A heartbeat is the Cloud's view of our
+        # liveness; nothing this node decides depends on it, and failing the pass over
+        # it would hide a pull that worked.
+        state.push_failed(str(failure), now=now)
 
 
 def push_dirty_catalogues(session: Session, cloud: CloudTransport, *, node_id: str) -> None:
@@ -337,7 +397,9 @@ async def sync_loop(
             # `tick()` already swallows CloudError. Anything reaching here is a bug, and
             # the loop must still survive it: a node that stopped syncing because of one
             # malformed feed would need a restart nobody knows to perform.
-            state.failed(f"sync loop: {unexpected}", now=dt.datetime.now(dt.UTC))
+            # Counted against the pull: an unexpected error means no agreements
+            # arrived, which is the consequential half.
+            state.pull_failed(f"sync loop: {unexpected}", now=dt.datetime.now(dt.UTC))
         await asyncio.sleep(interval)
 
 
@@ -355,17 +417,25 @@ def metrics_text(state: SyncState, *, now: dt.datetime | None = None) -> str:
     Here rather than in C13's general metrics because F16 asks for staleness
     specifically, and it is the one number that matters during a Cloud outage. C13 will
     add the rest around it.
+
+    Push and pull are separate series. Alert on the pull: that is enforcement falling
+    behind. A rising push counter means this node's catalogue entries are going stale in
+    the Cloud, which is worth a ticket and not a page.
     """
     now = now or dt.datetime.now(dt.UTC)
-    age = state.seconds_since_success(now)
+    age = state.seconds_since_pull(now)
     lines = [
-        "# HELP circuless_node_sync_age_seconds Seconds since the last successful sync, "
-        "or -1 if this process has not completed one.",
+        "# HELP circuless_node_sync_age_seconds Seconds since this process last pulled "
+        "agreements successfully, or -1 if it never has. Enforcement staleness.",
         "# TYPE circuless_node_sync_age_seconds gauge",
         f"circuless_node_sync_age_seconds {age if age is not None else -1:.0f}",
-        "# HELP circuless_node_sync_failures_total Consecutive failed sync attempts.",
-        "# TYPE circuless_node_sync_failures_total gauge",
-        f"circuless_node_sync_failures_total {state.consecutive_failures}",
+        "# HELP circuless_node_pull_failures_total Consecutive failed agreement pulls.",
+        "# TYPE circuless_node_pull_failures_total gauge",
+        f"circuless_node_pull_failures_total {state.consecutive_pull_failures}",
+        "# HELP circuless_node_push_failures_total Consecutive failed catalogue pushes. "
+        "Discovery, not enforcement.",
+        "# TYPE circuless_node_push_failures_total gauge",
+        f"circuless_node_push_failures_total {state.consecutive_push_failures}",
         "# HELP circuless_node_agreements_cached Agreements currently enforced from cache.",
         "# TYPE circuless_node_agreements_cached gauge",
         f"circuless_node_agreements_cached {state.agreements_cached}",
