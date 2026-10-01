@@ -109,13 +109,19 @@ services:
       # /metrics over the overlay, per the NetBird policy — arrives with the address
       # detection in the next part of N15.
       CIRCULESS_NODE_INTERNAL_HOST: 127.0.0.1
-      # Known gap, closing with the address detection in the next part of N15: the node
-      # binds 0.0.0.0, and this namespace also holds `eth0` on the Docker bridge — which
-      # it needs for outbound traffic to Keycloak and the Cloud API. So on a Linux host
-      # the node is reachable on its bridge address from the host and from containers on
-      # the same bridge. Not from the network, and not from the overlay's peers beyond
-      # what the ACL permits — but not nothing. Binding the public socket to the
-      # detected overlay address removes it.
+      # The node still binds 0.0.0.0 on the public socket, and this namespace also
+      # holds `eth0` on the Docker bridge — which it needs for outbound traffic to
+      # Keycloak and the Cloud API. So on a Linux host the node's socket is reachable
+      # from the host's bridge and from containers on it.
+      #
+      # Severity is low rather than zero: every route requires a valid token for this
+      # node's audience (D21), so what an attacker on the bridge reaches is a 401.
+      #
+      # Binding the public socket to the detected overlay address would close it, and is
+      # deliberately not done: a node always starts *before* its peer is approved — that
+      # is the order in README.md — so the address does not exist yet and the bind would
+      # fall back to 0.0.0.0 every time. Doing it properly means rebinding once the peer
+      # connects, which is a larger change than it looks and is not N15.
 
     volumes:
       # Database, resource content, and the node's keypair and certificate. A named

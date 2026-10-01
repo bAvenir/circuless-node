@@ -18,7 +18,7 @@ import sys
 
 import uvicorn
 
-from . import __version__
+from . import __version__, overlay
 from .app import create_internal_app, create_public_app
 from .identity import (
     CloudAuthenticationError,
@@ -104,11 +104,52 @@ def _certificate_command(settings: Settings) -> int:
 
 
 def _check_command(settings: Settings) -> int:
-    """Confirm the node can actually authenticate — the M1 exit criterion, on demand."""
+    """Is this node working? One command, because during an install it is the question.
+
+    Three answers, reported together rather than as three tools: the keypair exists and
+    is readable only by us, the Cloud accepts us, and we are on the overlay. Each is a
+    different person's fault when it fails, which is exactly why someone installing a
+    node should not have to know which to ask first.
+
+    Overlay absence is **not** a failure. A node reaches Keycloak and the Cloud API over
+    the public internet; the overlay is for inbound traffic only, so a node without one
+    works and simply cannot be reached. Exiting non-zero for it would make a correct
+    development node look broken.
+    """
     keypair = load_or_create_keypair(settings)
-    CloudCredentials(settings, keypair).token()
-    print(f"OK: {settings.node_client_id} obtained a circuless-cloud token")
-    return 0
+    print(f"keypair:   {keypair.key_path} ({keypair.fingerprint[:16]}…)")
+
+    # Reported, not raised. An unregistered certificate is the normal state of a fresh
+    # install, and letting it abort the command would mean nobody sees their overlay
+    # status until the step before it is done — at exactly the point they are trying to
+    # work out which step is missing.
+    failed = False
+    try:
+        CloudCredentials(settings, keypair).token()
+        print(f"cloud:     {settings.node_client_id} obtained a circuless-cloud token")
+    except CloudAuthenticationError as refusal:
+        print(f"cloud:     FAILED — {refusal}", file=sys.stderr)
+        failed = True
+
+    detected = overlay.detect_overlay_address()
+    if detected is None:
+        print("overlay:   not joined — nothing can reach this node")
+        print("           (fine for development; for a deployment, check the peer is")
+        print("            connected and approved in the NetBird console)")
+    else:
+        print(f"overlay:   {detected}")
+
+    published = settings.effective_overlay_base_url
+    if settings.overlay_base_url and detected and detected not in settings.overlay_base_url:
+        # The one combination that is wrong rather than merely incomplete: the node is
+        # telling every peer that reads /.well-known to use an address it is not on.
+        print(
+            f"           WARNING: publishing {settings.overlay_base_url!r}, "
+            f"but this node is at {detected}",
+            file=sys.stderr,
+        )
+    print(f"published: {published or '(no overlay address in /.well-known)'}")
+    return 1 if failed else 0
 
 
 def main() -> int:

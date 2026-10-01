@@ -9,6 +9,8 @@ from pathlib import Path
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from . import overlay
+
 
 class NodeOperator(StrEnum):
     """Who runs this node (D22).
@@ -65,8 +67,8 @@ class Settings(BaseSettings):
     # configuration rather than by either side guessing.
     overlay_base_url: str | None = Field(
         default=None,
-        description="This node's address on the CIRCULess overlay, e.g. "
-        "https://100.x.y.z:8000. Preferred by clients that can reach it.",
+        description="Override for this node's overlay address. Normally unset: the "
+        "address is detected from the interface the NetBird agent created.",
     )
     gateway_base_url: str | None = Field(
         default=None,
@@ -131,6 +133,21 @@ class Settings(BaseSettings):
         if not self.node_client_id:
             object.__setattr__(self, "node_client_id", f"node-{self.node_id}")
         return self
+
+    @property
+    def effective_overlay_base_url(self) -> str | None:
+        """What `/.well-known` publishes as this node's overlay address.
+
+        Detected unless overridden. The failure worth preventing is a node advertising
+        an address it is not on — a setting is a line in a partner's `.env` that nobody
+        validates until a client cannot connect, and an interface is the truth.
+
+        Not cached. The ioctl loop is a handful of syscalls, and a node that joined the
+        overlay a minute after starting should say so without being restarted.
+        """
+        if self.overlay_base_url:
+            return self.overlay_base_url
+        return overlay.overlay_base_url(self.public_port)
 
     @property
     def refuses_sensitive(self) -> bool:

@@ -330,14 +330,32 @@ single-use keys, default-deny rules, and keeping BVR's own routes and DNS away f
 CIRCULess peers — lives in the `circuless-cloud` repository at
 `deploy/netbird/POLICIES.md`.
 
-### Known gap, closing with the address detection
+### Finding its own address
 
-The node binds `0.0.0.0` inside the namespace, which also holds `eth0` on the Docker
-bridge — needed for outbound traffic to Keycloak and the Cloud API. So on a Linux host
-the node is reachable on its bridge address from the host and from containers on the
-same bridge. Not from the network, and not from overlay peers beyond what the access
-rules permit, but not nothing. Binding the public socket to the detected overlay address
-removes it.
+`overlay.py` looks for an address in `100.64.0.0/10`, NetBird's allocation range, by
+asking each interface with `ioctl(SIOCGIFADDR)`. No NetBird binary — the agent is in the
+*other* container — and no iproute2, which the runtime image deliberately lacks.
+
+That address is what `/.well-known` publishes, so a node cannot advertise an address it
+is not on. `CIRCULESS_NODE_OVERLAY_BASE_URL` overrides it for what detection cannot know
+about, and `check` warns if the override disagrees with the interface.
+
+The first implementation used `getaddrinfo(interface_name)`, which is not a thing: it
+fails for every interface on Linux, so detection returned `None` always — and passed
+every test, because the development machine has no overlay and `None` is also the right
+answer there. `tests/test_overlay.py` carries the container command that caught it.
+
+### Residual exposure, stated plainly
+
+The node binds `0.0.0.0` on its public socket, and the namespace also holds `eth0` on
+the Docker bridge, which it needs to reach Keycloak and the Cloud API. On a Linux host
+the socket is therefore reachable from the host's bridge and from containers on it.
+
+Every route requires a valid token for this node's audience (D21), so what that reaches
+is a 401. Binding to the detected overlay address would remove it, and is deliberately
+not done: a node always starts before its peer is approved, so the address does not
+exist yet and the bind would fall back to `0.0.0.0` every time. The real fix is
+rebinding once the peer connects, which is larger than it looks and is not N15.
 
 ### The private key and the image
 
@@ -498,10 +516,10 @@ self-authentication.
 **M2, in progress:** **N5** resource registry, **N18** management authorization, **N7**
 sync client, **N12** `/.well-known/circuless-node`.
 
-**N15** in progress: the image, the overlay stack and the install guide are here;
-overlay address detection and `check` reporting it are next.
+**N15** complete: the image, the overlay stack, the install guide, overlay address
+detection, and `check` reporting all three answers at once.
 
-Then the remote dry run (Q3) on a machine outside BVR's network.
+Next: the remote dry run (Q3) on a machine outside BVR's network.
 
 Not yet built, and deliberately absent rather than stubbed: `decide()` (N6), uploads,
 and deletion. Deletion is two-stage (D25, N20 in M3), so there is no `DELETE` at all — a

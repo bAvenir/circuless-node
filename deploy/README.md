@@ -77,11 +77,24 @@ here to put in a password manager.
 docker compose exec node circuless-node check
 ```
 
-It confirms the node can obtain a Cloud token, and says so plainly if the certificate has
-not been registered yet rather than leaving you reading Keycloak logs.
+Three answers at once, because during an install each is a different person's fault and
+you should not have to guess which to ask about first:
 
-*(Overlay reachability joins this command in the next part of N15; until then, confirm
-the peer is connected in the NetBird console.)*
+```
+keypair:   /var/lib/circuless/node.key (471b5836a5cde875…)
+cloud:     node-alpha-onprem obtained a circuless-cloud token
+overlay:   100.92.1.7
+published: https://100.92.1.7:8000
+```
+
+`overlay: not joined` means the peer is not connected or not yet approved — step 3. It is
+**not** a failure on its own: the node reaches Keycloak and the Cloud API over the public
+internet, and the overlay is for inbound traffic. A node without one works; nothing can
+reach it.
+
+`published` is what `/.well-known/circuless-node` tells other participants. It is the
+detected address, so it cannot drift from reality — unless you set
+`CIRCULESS_NODE_OVERLAY_BASE_URL`, in which case `check` warns if the two disagree.
 
 ## 6. Delete the setup key
 

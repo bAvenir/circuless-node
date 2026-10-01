@@ -91,7 +91,9 @@ def _endpoints(settings: Settings) -> list[dict[str, str]]:
     handle.
     """
     candidates = (
-        ("overlay", settings.overlay_base_url),
+        # Detected from the interface unless overridden, so the published address is one
+        # the node is actually on rather than one somebody typed.
+        ("overlay", settings.effective_overlay_base_url),
         ("gateway", settings.gateway_base_url),
     )
     return [{"kind": kind, "url": url} for kind, url in candidates if url]

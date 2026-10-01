@@ -114,5 +114,19 @@ jobs:
 
       # Printed, not filed away. A deferral nobody sees is indistinguishable from an
       # oversight by the time an auditor asks.
+      # Found on 2026-10-01: `bvr-ci install-hooks` had silently replaced this hook
+      # with its stock version, dropping the staged-secret scan H1 added. The hook was
+      # still there and still ran — it just stopped looking for secrets, which is the
+      # failure mode the hook's own comment warns about. bvr-ci writes the file
+      # unconditionally, so this will recur after any upgrade that prompts a reinstall.
+      - name: The pre-commit hook still scans for secrets
+        run: |
+          grep -q gitleaks .githooks/pre-commit || {
+            echo "::error::.githooks/pre-commit no longer runs gitleaks." >&2
+            echo "bvr-ci install-hooks overwrites it with the stock version." >&2
+            echo "Restore it with: git checkout .githooks/pre-commit" >&2
+            exit 1
+          }
+
       - name: Deferred security controls
         run: cat SECURITY-DEFERRALS.md

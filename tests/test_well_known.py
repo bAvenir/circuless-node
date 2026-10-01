@@ -187,3 +187,42 @@ def test_it_carries_no_key_material_or_paths(client: TestClient, realm: FixtureR
 
 def test_it_is_the_only_public_path_outside_v1() -> None:
     assert {PATH} == UNVERSIONED_PATHS
+
+
+def test_a_detected_overlay_address_is_published(
+    realm: FixtureRealm, tmp_path, monkeypatch
+) -> None:
+    """N15. The document advertises the address the node is actually on.
+
+    The failure this prevents: a node publishing an address nobody can route to, which
+    a client discovers by timing out rather than by being told.
+    """
+    from circuless_node import overlay
+
+    monkeypatch.setattr(overlay, "_local_addresses", lambda: ["172.17.0.2", "100.92.1.7"])
+    settings = Settings(  # type: ignore[call-arg]
+        node_id=realm.node_id,
+        issuer=realm.issuer,
+        gateway_base_url="https://n1.nodes.circuless.eu",
+        database_url=f"sqlite:///{tmp_path / 'n.db'}",
+        data_dir=tmp_path / "d",
+    )
+    document = node_document(settings)
+    assert document["endpoints"] == [
+        {"kind": "overlay", "url": "https://100.92.1.7:8000"},
+        {"kind": "gateway", "url": "https://n1.nodes.circuless.eu"},
+    ]
+
+
+def test_no_overlay_means_the_gateway_alone(realm: FixtureRealm, tmp_path, monkeypatch) -> None:
+    from circuless_node import overlay
+
+    monkeypatch.setattr(overlay, "_local_addresses", lambda: ["127.0.0.1"])
+    settings = Settings(  # type: ignore[call-arg]
+        node_id=realm.node_id,
+        issuer=realm.issuer,
+        gateway_base_url="https://n1.nodes.circuless.eu",
+        database_url=f"sqlite:///{tmp_path / 'n.db'}",
+        data_dir=tmp_path / "d",
+    )
+    assert [e["kind"] for e in node_document(settings)["endpoints"]] == ["gateway"]
