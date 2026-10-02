@@ -1,6 +1,6 @@
 [project]
 name = "circuless-node"
-version = "0.2.0"
+version = "0.3.0"
 description = "CIRCULess Node — the data plane. Holds organisations' resources and decides every access locally."
 readme = "README.md"
 license = { file = "LICENSE" }
