@@ -284,6 +284,64 @@ returns; N7's loop sends the tenant's catalogue and clears it. Pushing inside th
 would make registration fail whenever the Cloud is unreachable, turning a control-plane
 outage into a data-plane one — the thing F16 and D1 exist to prevent.
 
+## Deciding access (N6)
+
+```python
+decide(subject, action, resource, owner_org, agreements, now, requested_acting_org) -> Decision
+```
+
+**Pure.** No database, no clock, no request — agreements and `now` are inputs, loaded by
+the caller. That is what lets the whole decision table be tested without a server, and
+this function carries most of the product's security properties, so exhaustive testing
+had to be cheap.
+
+| `visibility` | allowed |
+|---|---|
+| anything **withdrawn** | nobody (D25) — `not_found`, so a gone resource is indistinguishable from one that never existed |
+| `private` | admins of the owning organisation only, **not** ordinary members |
+| `org` | any user or service of the owning organisation |
+| `agreement` | the owner, plus any organisation holding a matching agreement |
+| `public` | any authenticated user or service — never anonymous, never a node |
+
+A node principal is refused before any of that (D14). N2 already rejects node tokens;
+this is the second lock, because that is the rule an attacker reaches by stealing a
+node's key rather than a person's password.
+
+An agreement matches only if **all** of: its provider owns this resource, its status is
+exactly `accepted`, it names this resource or none at all, it permits this action, and
+`now` is inside `[valid_from, valid_until)` — half-open, so `valid_until` means "until"
+rather than "through".
+
+`decide()` returns the **acting organisation** on an allow, which N11 logs: it is the
+answer to "on whose behalf did this person read that file". It is `None` for `public`,
+where nothing of the caller's is what permitted it.
+
+### R11 lives in one place
+
+`subject.acting_org()` is pure and returns a result; `subject.resolve_acting_org()` is
+the raising wrapper the handlers use. Two shapes, one implementation — written
+separately, the rule that a header naming someone else's organisation is *refused rather
+than ignored* would end up holding in only one of them.
+
+### The decision table, and why it is built the way it is
+
+`tests/test_decide.py` has two kinds of test:
+
+- **written rows** — each a deliberate claim about what should happen and why;
+- **exhaustive sweeps** over visibility × principal × agreement status × time, asserting
+  only the **absolutes**: a node principal is denied in every combination, a withdrawn
+  resource is denied in every combination, only `accepted` ever permits, another
+  provider's agreement never grants anything.
+
+Generating the full product with computed expectations was the alternative, and is a
+trap: the expectations would come from a second implementation of `decide()`, and when
+the two disagreed nothing would say which was right. A sweep's assertion does not depend
+on the matrix, which is what keeps it from being vacuous.
+
+Verified by mutation rather than assumed: removing the node check fails 144 cases,
+removing the withdrawn check fails 432, making the time window inclusive at both ends
+fails exactly the boundary row, and accepting any agreement status fails 25.
+
 ## Who may manage a tenant's resources (N18)
 
 `management.py`, pure and table-tested, like the Cloud's `authz.decide()`:
@@ -488,6 +546,7 @@ src/circuless_node/
     resources.py  N5 registration, and the rules on licence and classification
     sync.py       N7 push, pull, heartbeat, and the staleness metrics
     well_known.py N12 what the node publishes about itself
+    decide.py     N6 who may read or invoke what, and on whose behalf
     management.py N18 who may manage a tenant's resources
     dcat.py       rendering DCAT-AP from typed fields
     vocabularies.py  the controlled lists: licences, themes, classification
@@ -536,8 +595,7 @@ detection, and `check` reporting all three answers at once.
 
 Next: the remote dry run (Q3) on a machine outside BVR's network.
 
-Not yet built, and deliberately absent rather than stubbed: `decide()` (N6), uploads,
-and deletion. Deletion is two-stage (D25, N20 in M3), so there is no `DELETE` at all — a
+Not yet built, and deliberately absent rather than stubbed: uploads and deletion. Deletion is two-stage (D25, N20 in M3), so there is no `DELETE` at all — a
 placeholder that actually removed a row would be the wrong thing to have to take back.
 `ResourceStatus.WITHDRAWN` exists from the start, and every query already excludes it, so
 N20 does not have to find the one that forgot.

@@ -142,51 +142,83 @@ def organisations_from_groups(groups: Iterable[str]) -> tuple[frozenset[str], fr
     return frozenset(org_ids), frozenset(admin_of)
 
 
-def resolve_acting_org(
+@dataclass(frozen=True)
+class ActingOrg:
+    """Which organisation a request is made on behalf of."""
+
+    org: str
+
+
+@dataclass(frozen=True)
+class ActingOrgRefused:
+    """No organisation of theirs can authorise it, or they named one they may not use."""
+
+    reason: Reason
+    detail: str
+
+
+def acting_org(
     subject: Subject,
     candidates: Iterable[str],
     requested: str | None = None,
-) -> str:
-    """Decide which organisation this request is made on behalf of (R11).
+) -> ActingOrg | ActingOrgRefused:
+    """Decide which organisation this request is made on behalf of (R11). Pure.
 
-    `candidates` are the organisations that could authorise *this* request — the resource's
-    owner, or the consumer side of a matching agreement. Intersecting them with the
-    subject's own organisations is what keeps a multi-org person from accidentally reading
+    `candidates` are the organisations that could authorise *this* request — the
+    resource's owner, or the consumer side of a matching agreement. Intersecting them
+    with the subject's own organisations is what keeps a multi-org person from reading
     one client's data under another client's rights.
 
-    Auditors ask on whose behalf a consultant read a file. This is the answer, and it is
-    logged.
+    Auditors ask on whose behalf a consultant read a file. This is the answer, and N11
+    logs it.
+
+    **Returns rather than raises**, because `decide()` is pure and a refusal is an
+    ordinary outcome there, not an exception. `resolve_acting_org` below is the raising
+    wrapper for the handlers that want one. One implementation of R11, two shapes — if
+    they were written separately, the rule that a header naming someone else's
+    organisation is *refused rather than ignored* would eventually hold in only one.
     """
     eligible = subject.org_ids & frozenset(candidates)
 
     if requested is not None:
         if not subject.belongs_to(requested):
-            # Naming someone else's organisation is refused outright rather than ignored:
-            # silently acting as a different org than the caller asked for is worse than
-            # an error, because they would never know.
-            raise NodeError(
-                403,
-                Reason.NOT_PERMITTED,
-                "not a member of the requested acting organisation",
+            # Naming someone else's organisation is refused outright rather than
+            # ignored: silently acting as a different org than the caller asked for is
+            # worse than an error, because they would never find out.
+            return ActingOrgRefused(
+                Reason.NOT_PERMITTED, "not a member of the requested acting organisation"
             )
         if requested not in eligible:
-            raise NodeError(
-                403,
+            return ActingOrgRefused(
                 Reason.NOT_PERMITTED,
                 "the requested acting organisation cannot authorise this request",
             )
-        return requested
+        return ActingOrg(requested)
 
     if len(eligible) == 1:
-        return next(iter(eligible))
+        return ActingOrg(next(iter(eligible)))
 
     if not eligible:
-        raise NodeError(
-            403, Reason.NOT_PERMITTED, "no organisation of yours can authorise this request"
+        return ActingOrgRefused(
+            Reason.NOT_PERMITTED, "no organisation of yours can authorise this request"
         )
 
-    raise NodeError(
-        403,
+    return ActingOrgRefused(
         Reason.AMBIGUOUS_ACTING_ORG,
         f"several of your organisations could authorise this; send {ACTING_ORG_HEADER}",
     )
+
+
+def resolve_acting_org(
+    subject: Subject,
+    candidates: Iterable[str],
+    requested: str | None = None,
+) -> str:
+    """`acting_org`, raising. For handlers that want an exception rather than a result.
+
+    The behaviour and the reason codes are `acting_org`'s; this only changes the shape.
+    """
+    result = acting_org(subject, candidates, requested)
+    if isinstance(result, ActingOrgRefused):
+        raise NodeError(403, result.reason, result.detail)
+    return result.org
