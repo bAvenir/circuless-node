@@ -165,3 +165,72 @@ def test_the_node_container_shares_the_agents_namespace() -> None:
     document = yaml.safe_load(compose.read_text())
 
     assert document["services"]["node"]["network_mode"] == "service:netbird"
+
+
+def test_no_identifier_is_a_sequential_integer() -> None:
+    """Invariant 16, as a test rather than a habit.
+
+    "Every external identifier is a UUID. Never use sequential integers in anything
+    external." The reason is not aesthetic: a sequential id tells anyone who sees one how
+    many of a thing exist, and invites walking the range to find the rest. A UUID tells
+    them nothing and cannot be guessed.
+
+    This was verified by hand for H3 and is asserted here so it stays true. The failure
+    it guards against is quiet — SQLModel will happily give a new model an integer
+    primary key if someone writes `id: int`, and nothing else would complain.
+
+    Strings are allowed and deliberate: `node_id`, `client_id` and a tenant's `slug` are
+    names people type, not identifiers we mint. What must never appear is an integer.
+    """
+    from sqlalchemy import BigInteger, Integer, SmallInteger
+    from sqlmodel import SQLModel
+
+    import circuless_node.models as node_models
+
+    ours = {
+        model.__tablename__
+        for model in vars(node_models).values()
+        if isinstance(model, type) and issubclass(model, SQLModel) and _is_table(model)
+    }
+
+    offenders = [
+        f"{name}.{column.name} ({type(column.type).__name__})"
+        for name, table in SQLModel.metadata.tables.items()
+        if name in ours
+        for column in table.columns
+        if (column.primary_key or column.name == "id" or column.name.endswith("_id"))
+        and isinstance(column.type, Integer | BigInteger | SmallInteger)
+    ]
+    assert offenders == [], (
+        "these identifiers are sequential integers, which leak how many of a thing "
+        f"exist and invite enumeration (invariant 16): {offenders}"
+    )
+
+
+def test_the_identifier_check_above_sees_this_repository_s_tables() -> None:
+    """Guards the guard.
+
+    The filter is by defining module, because SQLModel keeps one global `metadata` and a
+    process that also imports `circuless_cloud` would otherwise inspect its tables too.
+    A filter matching nothing would make the loop above iterate zero times and pass.
+    """
+    from sqlmodel import SQLModel
+
+    import circuless_node.models as node_models
+
+    ours = {
+        model.__tablename__
+        for model in vars(node_models).values()
+        if isinstance(model, type) and issubclass(model, SQLModel) and _is_table(model)
+    }
+    assert {"tenant", "resource", "agreement_cache", "org_map"} <= ours
+
+
+def _is_table(model: type) -> bool:
+    """SQLModel gives every subclass a `__tablename__`, including non-table bases like
+    `TenantOwned`, and pydantic's metaclass raises on `__table__` rather than returning
+    a default — so neither alone distinguishes a real table."""
+    try:
+        return model.__table__ is not None  # type: ignore[union-attr]
+    except AttributeError:
+        return False
