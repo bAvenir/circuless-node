@@ -342,6 +342,65 @@ Verified by mutation rather than assumed: removing the node check fails 144 case
 removing the withdrawn check fails 432, making the time window inclusive at both ends
 fails exactly the boundary row, and accepting any agreement status fails 25.
 
+## Serving the bytes (N8)
+
+```
+GET /v1/t/{tenant}/resources/{id}/data          a file, or a bucket's manifest
+GET /v1/t/{tenant}/resources/{id}/data/{path}   one object of a bucket
+```
+
+**One order, and it is the point of the module.** Resolve the tenant, load the resource,
+`decide()`, **log**, then touch the filesystem. Every refusal below the decision is a
+refusal to somebody already allowed; nothing above it can be learned without permission
+— not whether a file exists, not its size, not what a bucket contains. A test pins this
+by asking for a resource with no data and one with data as an outsider, and requiring
+the same 403 for both.
+
+Path validity is checked *after* the decision too. Whether `../../etc` is a legal path is
+not an authorisation question, and answering it first would hand the grammar to someone
+with no rights.
+
+**Withdrawn versus never existed.** A withdrawn resource is a decision — `decide()`
+denies it `not_found` (D25) and the denial is logged. A resource that never existed is
+not a decision: there is nothing to record it against, and logging it would let anyone
+fill a tenant's log by guessing UUIDs. It is a bare 404.
+
+**No Range in the beta.** `Accept-Ranges: none`, always 200, always the whole file. Said
+out loud rather than by omission, so a client does not attempt to resume and silently
+re-download believing it appended. If it is ever added, the one thing to remember is that
+Range must be parsed **after** the decision and the log write — a `416` carries
+`Content-Range: bytes */size` and would otherwise disclose a file's size to someone with
+no agreement.
+
+**Buckets are decided and logged per object.** Nothing in the model expresses per-object
+policy, so every object of a bucket necessarily gets the same answer. Deciding again
+anyway buys two things: the log shows *which* of a 500-file campaign someone pulled, and
+since agreements refresh every 30 s, a revocation takes effect mid-campaign rather than
+the manifest acting as a bearer token for the whole bucket. The manifest is recursive,
+capped at 10 000 objects with a `truncated` flag, and an empty or absent directory is
+`objects: []` rather than an error — registered-before-uploaded is a legitimate state.
+
+**Media type is guessed** from the filename, falling back to `application/octet-stream`.
+`Resource` carries no media type in the beta; a real `dcat:mediaType` field is M4 work.
+
+**`bytes` is filled in after the stream, not in a `finally`.** A client that disconnects
+leaves it null, which N11 defines as "granted, did not complete". A partial count in the
+same column as a completed one would be worse than nothing.
+
+### Path confinement is a refusal, not a crash (H3)
+
+`Storage.resolve` has always refused `..`, absolute paths and URLs, but until N8 nothing
+could reach it — so it had no handler, and a traversal would have returned **500
+`internal_error`** while `PATH_NOT_ALLOWED` sat unused in the enum. There is now an
+exception handler, so `/data/{path}`, `/invoke/{path}` (N9) and uploads (N19) are covered
+by construction rather than one at a time.
+
+The grammar check is also split out as `check_relative_path`, because a caller that
+*joins* a supplied segment onto a stored prefix must check it **before** the join:
+`PurePosixPath` collapses repeated slashes, so joining first turns `https://evil/x` into
+the perfectly ordinary `https:/evil/x` and the URL rule never fires on what was sent. A
+failing test found that, not a review.
+
 ## Who may manage a tenant's resources (N18)
 
 `management.py`, pure and table-tested, like the Cloud's `authz.decide()`:
@@ -596,6 +655,7 @@ src/circuless_node/
     tenancy.py    the central tenant filter, and the scopes that drive it
     resources.py  N5 registration, the licence and classification rules, the log read
     access_log.py N11 every decision, append-only; the request id middleware
+    transfer.py   N8 serving a dataset's bytes, and bucket manifests
     sync.py       N7 push, pull, heartbeat, and the staleness metrics
     well_known.py N12 what the node publishes about itself
     decide.py     N6 who may read or invoke what, and on whose behalf
@@ -644,9 +704,10 @@ sync client, **N12** `/.well-known/circuless-node`, **N15** the image, the overl
 the install guide and overlay address detection, and the remote dry run (Q3) on a machine
 outside BVR's network.
 
-**M3, in progress:** **N6** `decide()`, **N11** access log.
+**M3, in progress:** **N6** `decide()`, **N11** access log, **N8** data transfer and
+H3's path confinement.
 
-Next: N8 transfer, N19 upload, N20 two-stage deletion, then N10 credentials and N9 proxy.
+Next: N19 upload, N20 two-stage deletion, then N10 credentials and N9 proxy.
 
 Not yet built, and deliberately absent rather than stubbed: uploads and deletion. Deletion is two-stage (D25, N20 in M3), so there is no `DELETE` at all — a
 placeholder that actually removed a row would be the wrong thing to have to take back.

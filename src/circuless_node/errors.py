@@ -15,6 +15,8 @@ from enum import StrEnum
 from fastapi import Request
 from fastapi.responses import JSONResponse
 
+from .storage import PathNotAllowedError
+
 
 class Reason(StrEnum):
     # Identity and token handling (N2, N3)
@@ -60,6 +62,25 @@ class NodeError(Exception):
 
 
 def install_error_handlers(app) -> None:  # noqa: ANN001  — FastAPI app
+    @app.exception_handler(PathNotAllowedError)
+    async def _path_not_allowed(_request: Request, exc: PathNotAllowedError) -> JSONResponse:
+        """Path confinement refusals are a refusal, not a crash (H3, SR-3.2.3).
+
+        `Storage.resolve` raises this, and until N8 nothing could reach it — so it had no
+        handler, and a `..` in a path would have come back as 500 `internal_error` while
+        `PATH_NOT_ALLOWED` sat unused in the enum. Handled here rather than at each call
+        site so that `/data/{path}`, `/invoke/{path}` (N9) and uploads (N19) are all
+        covered by construction.
+
+        The message is safe to pass on: `resolve` raises on the shape of the path and
+        never includes the resolved location, so this cannot disclose where the data
+        directory is.
+        """
+        return JSONResponse(
+            status_code=400,
+            content={"reason": Reason.PATH_NOT_ALLOWED.value, "detail": str(exc)},
+        )
+
     @app.exception_handler(NodeError)
     async def _node_error(_request: Request, exc: NodeError) -> JSONResponse:
         body: dict[str, str] = {"reason": exc.reason.value}

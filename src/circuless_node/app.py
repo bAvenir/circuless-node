@@ -23,7 +23,7 @@ from fastapi import APIRouter, Depends, FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import __version__
-from .access_log import install_request_id
+from .access_log import REQUEST_ID_HEADER, install_request_id
 from .auth import TokenVerifier, requested_acting_org, require_subject
 from .db import create_db_engine
 from .errors import NodeError, install_error_handlers
@@ -32,6 +32,7 @@ from .settings import Settings, get_settings
 from .storage import Storage
 from .subject import Subject, resolve_acting_org
 from .sync import SyncState, metrics_text
+from .transfer import transfer_router
 from .well_known import node_document
 
 API_PREFIX = "/v1"
@@ -84,7 +85,15 @@ def create_public_app(settings: Settings | None = None) -> FastAPI:
             allow_credentials=True,
             allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
             allow_headers=["Authorization", "Content-Type", "X-CIRCULess-Acting-Org", "Range"],
-            expose_headers=["Content-Range", "Accept-Ranges", "Location"],
+            # The request id too (N11): a browser that cannot read it cannot quote it
+            # when reporting a failed download, which is the one thing it is for.
+            expose_headers=[
+                "Content-Range",
+                "Accept-Ranges",
+                "Content-Disposition",
+                "Location",
+                REQUEST_ID_HEADER,
+            ],
         )
 
     @app.get("/.well-known/circuless-node")
@@ -144,6 +153,7 @@ def v1_router() -> APIRouter:
         return body
 
     router.include_router(resource_router())
+    router.include_router(transfer_router())
     return router
 
 
