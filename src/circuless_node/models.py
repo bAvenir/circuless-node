@@ -11,7 +11,7 @@ Two families, and the difference is load-bearing (R10):
 Alembic runs from the first model, so every later table comes as a migration rather than
 a schema edit someone applied by hand.
 
-Still to arrive: `ServiceCredential` (N10).
+Every table the node has is here.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import Column, UniqueConstraint
+from sqlalchemy import Column, LargeBinary, UniqueConstraint
 from sqlalchemy.types import JSON
 from sqlmodel import Field, SQLModel
 
@@ -328,3 +328,59 @@ class AccessLog(TenantOwned, table=True):
     #: Write-once, and only for transfers. Null means "not a transfer, or it never
     #: completed" — the two are distinguished by `decision`.
     bytes: int | None = Field(default=None)
+
+
+class ServiceCredential(TenantOwned, table=True):
+    """How this node authenticates to a partner's own service (N10, invariant 11).
+
+    One per service resource, set by an organisation's **admins only** — never by a
+    service principal (N18). That asymmetry is the reason N18 exists: a pipeline account
+    that can publish yesterday's run is useful, and the same account being able to
+    rotate the upstream credential means a compromised pipeline can redirect where this
+    node sends a consumer's requests, and where it sends this credential.
+
+    ## The secret is never returned, by anything
+
+    No endpoint, no UI, no log, no error message. `GET` on the credential answers
+    whether one is set, of what kind, and when — which is everything an operator needs
+    and nothing an attacker does. It is decrypted in exactly one place, N9's proxy, on
+    its way into one outbound header.
+
+    ## Typed, not a header map
+
+    `scheme` plus one secret, rather than an arbitrary map of headers to values. A map
+    would be more flexible and would put a hole in invariant 10: an organisation's admin
+    could then set `Host`, a hop-by-hop header, or an `X-CIRCULess-Subject` of their
+    choosing, and the proxy's strip-and-allowlist discipline would be forwarding
+    whatever was in a config field. Typed means N9 **constructs** the header.
+
+    ## It cannot outlive its resource
+
+    `ON DELETE CASCADE`, so a purge (N20) takes the credential with the row by schema
+    rather than by the purge job remembering. The withdrawal that precedes the purge
+    deletes it sooner — see `resources.withdraw_resource`, and the reasoning there.
+    """
+
+    __tablename__ = "service_credential"
+
+    #: One credential per resource, so the resource id *is* the key. Cascading is the
+    #: point: nothing that deletes a resource can leave its secret behind.
+    resource_id: uuid.UUID = Field(primary_key=True, foreign_key="resource.id", ondelete="CASCADE")
+
+    #: `bearer`, `header` or `basic`. A string rather than an enum column for the same
+    #: reason the others are: a native enum makes a migration out of adding a scheme.
+    scheme: str = Field(max_length=16)
+    #: Only for `scheme=header` — the name N9 will send. Validated against a token
+    #: grammar and a refusal list, so it can never be `Host`, a hop-by-hop header, or
+    #: an `X-CIRCULess-*` the node asserts itself.
+    header_name: str | None = Field(default=None, max_length=64)
+
+    #: A Fernet token. Never a plaintext column, never logged, never serialised.
+    secret: bytes = Field(sa_column=Column(LargeBinary, nullable=False))
+
+    #: Who last set it — the pseudonymous `sub`, never a name (D31). The AccessLog has
+    #: the same fact; this is here so the question "who owns this credential" can be
+    #: answered without a log search.
+    set_by_sub: str = Field(max_length=255)
+    created_at: datetime = Field(default_factory=_now)
+    updated_at: datetime = Field(default_factory=_now)

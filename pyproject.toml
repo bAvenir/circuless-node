@@ -16,6 +16,11 @@ dependencies = [
     "alembic>=1.14",
     "fsspec>=2024.10",
     "pyjwt[crypto]>=2.10",
+    # Imported directly, not only through pyjwt's extra: X.509 for the node's own
+    # certificate (N17) and Fernet for upstream credentials at rest (N10). A transitive
+    # dependency that pyjwt could drop is the wrong thing for the node's key handling
+    # to rest on.
+    "cryptography>=44",
     "httpx>=0.28",
 ]
 

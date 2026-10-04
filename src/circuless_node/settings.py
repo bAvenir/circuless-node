@@ -88,6 +88,15 @@ class Settings(BaseSettings):
             "Root for resource content. Each resource gets data_dir/<tenant_id>/<resource_id>/."
         ),
     )
+    fernet_key_path: Path | None = Field(
+        default=None,
+        description=(
+            "Key that encrypts upstream service credentials (N10). Defaults to "
+            "data_dir/fernet.key. Point it elsewhere to keep the key out of whatever "
+            "backs up the data directory — the ciphertext is in the database, so the "
+            "two together are what disclose a credential."
+        ),
+    )
     purge_after_days: int = Field(
         default=30,
         gt=0,

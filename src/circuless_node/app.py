@@ -25,6 +25,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from . import __version__
 from .access_log import REQUEST_ID_HEADER, install_request_id
 from .auth import TokenVerifier, requested_acting_org, require_subject
+from .credentials import credential_router
 from .db import create_db_engine
 from .errors import NodeError, install_error_handlers
 from .resources import resource_router
@@ -156,6 +157,7 @@ def v1_router() -> APIRouter:
     router.include_router(resource_router())
     router.include_router(transfer_router())
     router.include_router(upload_router())
+    router.include_router(credential_router())
     return router
 
 

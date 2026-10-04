@@ -458,6 +458,73 @@ An upload records its byte count in the same AccessLog column a download does, a
 the tenant's catalogue dirty, since size and modification date have changed. Marked, not
 pushed — pushing here would make uploads fail whenever the Cloud is unreachable (F16).
 
+## The credential to somebody else's service (N10)
+
+```
+PUT    /v1/t/{tenant}/resources/{id}/credential    set or rotate
+GET    /v1/t/{tenant}/resources/{id}/credential    whether one is set — never the value
+DELETE /v1/t/{tenant}/resources/{id}/credential    remove it
+```
+
+This is the highest-value secret the node holds. Everything else it keeps is either its
+own — the node keypair proves only that it is itself — or somebody's metadata. This is a
+**partner's** credential to a **partner's** system, handed over so the node can call it
+on a consumer's behalf.
+
+**Admins only, never a service principal.** The one row of N18's table where a service
+principal is refused something it can otherwise do. A pipeline account that publishes
+yesterday's run is useful; the same account able to rotate this could point the node at a
+server of its choosing, and send it this credential on the way.
+
+**Never returned, by anything.** Not the value, not a prefix, not a length. `GET` answers
+whether one is set, of what kind, when and by whom. It is decrypted in exactly one place —
+N9's proxy, on its way into one outbound header. A test sweeps every response the
+credential routes can produce and asserts the plaintext appears in none of them, so a
+fourth endpoint added later is covered by the property rather than by someone remembering
+to extend a list.
+
+**Ciphertext at rest**, asserted against the database file on disk and not just the
+column — "it is encrypted" is a claim about the file an operator might copy. The key is a
+`0600` file beside the node's private key, and the node **refuses to use it** if the mode
+has loosened, with the same wording and the same reasoning as the node keypair: fixing it
+silently would hide that something changed, and every credential it protects should then
+be considered disclosed.
+
+`CIRCULESS_NODE_FERNET_KEY_PATH` moves it. The ciphertext is in the database and the key
+is on disk, so **a database backup alone discloses nothing** — but a backup that sweeps up
+the node directory *and* the database has both, which is why the key backup belongs
+somewhere the data backup is not (G11).
+
+### Typed, so that N9 builds the header
+
+`bearer`, `header` or `basic` — one secret and a scheme, not an arbitrary map of header
+names to values. The map version is more flexible and would quietly undo invariant 10: an
+organisation's admin could then set `Host`, a hop-by-hop header, or an
+`X-CIRCULess-Subject` of their own choosing, and the proxy would be forwarding a config
+field instead of asserting something it derived. `credentials.render()` is the only thing
+that turns a credential into a header, and it constructs it.
+
+Header names for the `header` scheme are checked against the RFC 7230 token grammar — so
+a CR or LF cannot appear, making injection impossible rather than unlikely — and against
+a refusal list covering hop-by-hop headers, `Host`, `Content-Length` and every
+`X-CIRCULess-*`.
+
+For `basic`, the username lives **inside** the ciphertext rather than beside it. Half a
+credential in plaintext is still half a credential.
+
+### It cannot outlive its resource
+
+`ON DELETE CASCADE`, so a purge (N20) takes the credential with the row by schema rather
+than by the purge job remembering — the purge already has a list of things to do, and
+"the partner's password" is the worst possible item to have on it.
+
+The node destroys it **sooner** than that: withdrawing a service resource deletes the
+credential immediately, rather than holding it through the thirty-day retention window.
+That window exists so a provider can recover *data* deleted by mistake; a credential is
+not something they would want back, and keeping a partner's secret after they said the
+service was gone is the wrong side of the trade. The cascade is the backstop, not the
+mechanism.
+
 ## Deleting, in two stages (N20)
 
 ```
@@ -774,6 +841,7 @@ src/circuless_node/
     transfer.py   N8 serving a dataset's bytes, and bucket manifests
     upload.py     N19 receiving them; staged writes and the size limit
     purge.py      N20 stage two: removing what a withdrawal scheduled
+    credentials.py  N10 upstream secrets: the Fernet key, and the header N9 sends
     sync.py       N7 push, pull, heartbeat, and the staleness metrics
     well_known.py N12 what the node publishes about itself
     decide.py     N6 who may read or invoke what, and on whose behalf
@@ -813,6 +881,9 @@ default.
 `CIRCULESS_NODE_PURGE_AFTER_DAYS` is the gap between a `DELETE` and the purge that
 removes the bytes (N20), 30 by default.
 
+`CIRCULESS_NODE_FERNET_KEY_PATH` is the key that encrypts upstream credentials (N10),
+defaulting to `data_dir/fernet.key`. Point it somewhere the data backup does not reach.
+
 `CIRCULESS_NODE_CORS_ALLOW_ORIGINS` is an exact list and the node **refuses to start** on
 `"*"` (G7). Browser downloads through the gateway are cross-origin and carry a bearer token,
 so a wildcard would let any site spend a user's node token.
@@ -829,11 +900,13 @@ the install guide and overlay address detection, and the remote dry run (Q3) on 
 outside BVR's network.
 
 **M3, in progress:** **N6** `decide()`, **N11** access log, **N8** data transfer and
-H3's path confinement, **N19** upload, **N20** two-stage deletion.
+H3's path confinement, **N19** upload, **N20** two-stage deletion, **N10** service
+credentials.
 
-Next: N10 credentials, then N9 proxy — the `invoke` half of the node.
+Next: N9, the service proxy — the last of M3's node work, and the other half of
+`invoke`.
 
-Not yet built, and deliberately absent rather than stubbed: service credentials (N10)
-and the `invoke` proxy (N9). A service resource can be registered and appears in the
-catalogue as a `dcat:DataService`; calling one is refused as `unsupported` until N9,
-rather than proxied to nowhere.
+Not yet built, and deliberately absent rather than stubbed: the `invoke` proxy (N9). A
+service resource can be registered, appears in the catalogue as a `dcat:DataService`, and
+can hold a credential; calling one is refused as `unsupported` until N9, rather than
+proxied to nowhere.

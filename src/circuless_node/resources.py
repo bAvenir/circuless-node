@@ -56,7 +56,7 @@ from . import access_log
 from .auth import require_subject
 from .errors import NodeError, Reason
 from .management import ManagementAction, decide_management
-from .models import CataloguePush, Resource, Tenant
+from .models import CataloguePush, Resource, ServiceCredential, Tenant
 from .settings import Settings
 from .storage import check_relative_path
 from .subject import Subject, organisations_from_groups
@@ -352,6 +352,22 @@ def resource_router() -> APIRouter:
                 resource.purge_after = now + timedelta(days=settings.purge_after_days)
                 resource.updated_at = now
                 session.add(resource)
+
+                # The upstream credential goes now, not at the purge (N10). The
+                # retention window exists so a provider can recover *data* deleted by
+                # mistake; a credential is not something they would want back — they
+                # can set it again in a keystroke — and holding a partner's secret for
+                # thirty days after they said the service was gone is the wrong side of
+                # every trade here. `ON DELETE CASCADE` on the row is still the
+                # backstop; this is about sooner, not about whether.
+                #
+                # Done through the model rather than by calling into `credentials`,
+                # which imports this module: a cycle that happens to work in one import
+                # order is a cycle that breaks in the other, and this one did.
+                credential = session.get(ServiceCredential, resource.id)
+                if credential is not None:
+                    session.delete(credential)
+
                 mark_catalogue_dirty(session, tenant.id)
                 session.commit()
                 session.refresh(resource)
