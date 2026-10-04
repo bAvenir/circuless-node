@@ -140,11 +140,19 @@ def _writable(
         )
         with tenant_scope(session, authorised.tenant.id):
             resource = session.get(Resource, resource_id)
-            if resource is None or resource.status is not ResourceStatus.ACTIVE:
-                # Withdrawn is gone to everyone, including the organisation that owns it
-                # (D25). Uploading into a withdrawn resource would quietly resurrect data
-                # that a purge is already scheduled to remove.
+            if resource is None:
                 raise NodeError(404, Reason.NOT_FOUND, "no such resource")
+            if resource.status is not ResourceStatus.ACTIVE:
+                # Uploading into a withdrawn resource would resurrect data a purge is
+                # already scheduled to remove (D25, N20). `409` rather than `404`
+                # because management can see withdrawn resources — pretending it is
+                # absent to the caller looking at it in their own list would be the
+                # worse answer.
+                raise NodeError(
+                    409,
+                    Reason.CONFLICT,
+                    "this resource is withdrawn and awaiting purge; it cannot be changed",
+                )
             if resource.kind is not ResourceKind.DATASET:
                 raise NodeError(
                     400, Reason.UNSUPPORTED, "a service has no stored data; register an endpoint"

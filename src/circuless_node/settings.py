@@ -88,6 +88,15 @@ class Settings(BaseSettings):
             "Root for resource content. Each resource gets data_dir/<tenant_id>/<resource_id>/."
         ),
     )
+    purge_after_days: int = Field(
+        default=30,
+        gt=0,
+        description=(
+            "Days between a DELETE and the purge that removes the bytes (N20, D25). "
+            "Long enough to undo a mistaken deletion; the acceptance test lowers it so "
+            "the second stage can actually be observed."
+        ),
+    )
     max_upload_bytes: int = Field(
         default=1024 * 1024 * 1024,
         gt=0,

@@ -249,10 +249,16 @@ def test_an_agreement_does_not_grant_write(
 def test_uploading_to_a_withdrawn_resource_is_refused(
     client: TestClient, app, alpha_admin: dict[str, str]
 ) -> None:
-    """D25. It would quietly resurrect data a purge is already scheduled to remove."""
+    """D25. It would resurrect data a purge is already scheduled to remove.
+
+    `409`, not `404`: since N20 an organisation can see its own withdrawn resources in
+    its management list, so answering "no such resource" to the caller looking straight
+    at it would be the worse of the two lies.
+    """
     resource_id = make_resource(app, status=ResourceStatus.WITHDRAWN)
     response = client.put(url(resource_id), headers=alpha_admin, content=PAYLOAD)
-    assert response.status_code == 404
+    assert response.status_code == 409
+    assert response.json()["reason"] == "conflict"
 
 
 def test_a_service_resource_has_no_stored_data(

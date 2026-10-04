@@ -458,6 +458,65 @@ An upload records its byte count in the same AccessLog column a download does, a
 the tenant's catalogue dirty, since size and modification date have changed. Marked, not
 pushed — pushing here would make uploads fail whenever the Cloud is unreachable (F16).
 
+## Deleting, in two stages (N20)
+
+```
+DELETE /v1/t/{tenant}/resources/{id}     stage one: withdraw
+circuless-node purge                     stage two, on demand (it also runs hourly)
+```
+
+**Stage one removes nothing.** It sets `status=withdrawn`, stamps `withdrawn_at`, and
+schedules `purge_after = now + CIRCULESS_NODE_PURGE_AFTER_DAYS` (30 by default). From
+that moment `decide()` denies every read and invoke with `not_found`, including to
+consumers holding a live agreement — the retention window is about *recovery*, not about
+continued access.
+
+Withdrawal reaches the catalogue **by absence**: the push already filters on
+`status == active`, and the Cloud tombstones records a push no longer contains. No second
+call that could fail on its own.
+
+**Stage two** removes the resource's directory and its row. Nothing else.
+
+### What the owner can see
+
+`decide()` enforces D25's "gone to everyone" where it matters — no consumer, no byte.
+But an organisation can still see its own withdrawn resources in its management list,
+with `withdrawn_at` and `purge_after`. Without that, a provider who deletes the wrong
+dataset has no way to discover it while there is still time to care.
+
+A withdrawn resource cannot be patched or uploaded to: **409**, not 404, because the
+caller can see it and pretending it is absent would be the worse of the two answers. A
+second `DELETE` is a 409 too — replying "done" would hide that the purge date was set by
+the first call and has not moved.
+
+This settled an inconsistency that predated N20: `GET /resources/{id}` refused a
+withdrawn resource while `GET /resources` still listed it.
+
+### Bytes first, then the row
+
+If the row went first and removing the bytes then failed, the files would be orphaned —
+no record that they exist, nothing that will ever retry, and a retention promise quietly
+broken by a full disk. The other way round, a failure leaves the resource still withdrawn
+and still due, and the next pass tries again. One ordering is recoverable; the other is
+not. Each resource is its own transaction, so a backlog that fails part-way keeps what it
+managed.
+
+Staging leftovers are purged too. They live outside the resource's directory (N19), so a
+crashed upload would otherwise leave bytes behind after the thing they belonged to was
+gone.
+
+**The access log survives** (invariant 14). `AccessLog.resource_id` is deliberately not a
+foreign key, which is what lets an entry outlive the row it names, and a test asserts
+that entries afterwards point at something that no longer exists — it looks enough like a
+bug that somebody would otherwise fix it.
+
+### Where it runs
+
+Its own loop beside the servers, hourly, a peer of the sync loop and for the same reason:
+nothing to schedule on a partner site, nothing to install, and it stops when the node
+stops. `circuless-node purge` runs one pass on demand — how an operator answers "is it
+gone yet", and how the acceptance test reaches stage two without waiting a month.
+
 ## Who may manage a tenant's resources (N18)
 
 `management.py`, pure and table-tested, like the Cloud's `authz.decide()`:
@@ -714,6 +773,7 @@ src/circuless_node/
     access_log.py N11 every decision, append-only; the request id middleware
     transfer.py   N8 serving a dataset's bytes, and bucket manifests
     upload.py     N19 receiving them; staged writes and the size limit
+    purge.py      N20 stage two: removing what a withdrawal scheduled
     sync.py       N7 push, pull, heartbeat, and the staleness metrics
     well_known.py N12 what the node publishes about itself
     decide.py     N6 who may read or invoke what, and on whose behalf
@@ -750,6 +810,9 @@ tokens are accepted only for audience `node:<node_id>`.
 `CIRCULESS_NODE_MAX_UPLOAD_BYTES` is the largest single upload accepted (N19), 1 GiB by
 default.
 
+`CIRCULESS_NODE_PURGE_AFTER_DAYS` is the gap between a `DELETE` and the purge that
+removes the bytes (N20), 30 by default.
+
 `CIRCULESS_NODE_CORS_ALLOW_ORIGINS` is an exact list and the node **refuses to start** on
 `"*"` (G7). Browser downloads through the gateway are cross-origin and carry a bearer token,
 so a wildcard would let any site spend a user's node token.
@@ -766,11 +829,11 @@ the install guide and overlay address detection, and the remote dry run (Q3) on 
 outside BVR's network.
 
 **M3, in progress:** **N6** `decide()`, **N11** access log, **N8** data transfer and
-H3's path confinement, **N19** upload.
+H3's path confinement, **N19** upload, **N20** two-stage deletion.
 
-Next: N20 two-stage deletion, then N10 credentials and N9 proxy.
+Next: N10 credentials, then N9 proxy — the `invoke` half of the node.
 
-Not yet built, and deliberately absent rather than stubbed: uploads and deletion. Deletion is two-stage (D25, N20 in M3), so there is no `DELETE` at all — a
-placeholder that actually removed a row would be the wrong thing to have to take back.
-`ResourceStatus.WITHDRAWN` exists from the start, and every query already excludes it, so
-N20 does not have to find the one that forgot.
+Not yet built, and deliberately absent rather than stubbed: service credentials (N10)
+and the `invoke` proxy (N9). A service resource can be registered and appears in the
+catalogue as a `dcat:DataService`; calling one is refused as `unsupported` until N9,
+rather than proxied to nowhere.

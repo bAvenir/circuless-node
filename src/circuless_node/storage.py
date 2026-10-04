@@ -192,6 +192,28 @@ class Storage:
         Path(resolved_target).parent.mkdir(parents=True, exist_ok=True)
         Path(self.resolve(tenant_id, source)).replace(resolved_target)
 
+    def purge_resource(self, tenant_id: uuid.UUID, resource_id: uuid.UUID) -> None:
+        """Remove everything a resource owns (N20, D25).
+
+        One `rm -r` of its directory, which is the dividend of the node owning the
+        layout: before N19 a purge would have had to work out which of a provider's
+        paths belonged to this resource and which were shared, and "shared" was a state
+        that could exist.
+
+        Staging leftovers are removed too. They live outside the resource's directory
+        (see `STAGING_DIR`), so a crashed upload would otherwise leave bytes behind
+        after the thing they belonged to had been purged — which is the one outcome a
+        retention promise cannot survive.
+        """
+        self.delete(tenant_id, resource_location(resource_id))
+
+        staging_root = (self._root / str(tenant_id) / STAGING_DIR).resolve()
+        if not self._fs.exists(str(staging_root)):
+            return
+        for leftover in self._fs.ls(str(staging_root), detail=False):
+            if PurePosixPath(leftover).name.startswith(f"{resource_id}-"):
+                self._fs.rm(leftover, recursive=True)
+
     def delete(self, tenant_id: uuid.UUID, relative_path: str) -> None:
         target = self.resolve(tenant_id, relative_path)
         if self._fs.exists(target):

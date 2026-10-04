@@ -44,7 +44,7 @@ prevent.
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, NamedTuple
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -169,6 +169,10 @@ def resource_out(resource: Resource) -> dict:
         "invoke_policy": resource.invoke_policy,
         "created_at": resource.created_at.isoformat(),
         "updated_at": resource.updated_at.isoformat(),
+        # Null until a DELETE. Shown so the owner can see a purge is pending, and when
+        # (N20, D25) — the whole point of making withdrawn resources visible to them.
+        "withdrawn_at": resource.withdrawn_at.isoformat() if resource.withdrawn_at else None,
+        "purge_after": resource.purge_after.isoformat() if resource.purge_after else None,
     }
 
 
@@ -285,7 +289,7 @@ def resource_router() -> APIRouter:
                 resource_id=resource_id,
             ).tenant
             with tenant_scope(session, tenant.id):
-                resource = _resource_or_404(session, resource_id)
+                resource = _active_or_conflict(session, resource_id)
 
                 changes = body.model_dump(exclude_unset=True)
                 for field, value in changes.items():
@@ -301,6 +305,52 @@ def resource_router() -> APIRouter:
                 _check_storage_path(resource.storage_path)
 
                 resource.updated_at = datetime.now(UTC)
+                session.add(resource)
+                mark_catalogue_dirty(session, tenant.id)
+                session.commit()
+                session.refresh(resource)
+                return resource_out(resource)
+
+    @router.delete("/t/{tenant_slug}/resources/{resource_id}")
+    def withdraw_resource(
+        request: Request,
+        tenant_slug: str,
+        resource_id: uuid.UUID,
+        subject: Subject = Depends(require_subject),
+    ) -> dict:
+        """Stage one of two (N20, D25). Marks the resource withdrawn; removes nothing.
+
+        From this moment `decide()` denies every read and invoke with `not_found`, and
+        the next sync drops the record from the catalogue push — the Cloud tombstones
+        what a push no longer contains, so withdrawal propagates by absence rather than
+        by a second call that could fail on its own.
+
+        The bytes stay until `purge_after`. That gap is the point: deletion that takes
+        effect instantly and irreversibly is deletion nobody dares use, and a provider
+        who removes the wrong dataset has until then to say so.
+
+        **Not idempotent.** A second `DELETE` is a 409, because by then the resource is
+        visible to its owner as withdrawn-and-scheduled, and answering "done" would
+        hide the fact that the purge date was set by the *first* call and has not moved.
+        """
+        settings: Settings = request.app.state.settings
+        with Session(request.app.state.engine) as session:
+            tenant = authorised_tenant(
+                request,
+                session,
+                subject,
+                tenant_slug,
+                ManagementAction.RESOURCE_DELETE,
+                resource_id=resource_id,
+            ).tenant
+            with tenant_scope(session, tenant.id):
+                resource = _active_or_conflict(session, resource_id)
+
+                now = datetime.now(UTC)
+                resource.status = ResourceStatus.WITHDRAWN
+                resource.withdrawn_at = now
+                resource.purge_after = now + timedelta(days=settings.purge_after_days)
+                resource.updated_at = now
                 session.add(resource)
                 mark_catalogue_dirty(session, tenant.id)
                 session.commit()
@@ -513,10 +563,36 @@ def tenant_org(tenant: Tenant) -> str:
 
 
 def _resource_or_404(session: Session, resource_id: uuid.UUID) -> Resource:
+    """Any resource of this tenant, withdrawn ones included.
+
+    **Management sees withdrawn resources; consumption never does.** D25 says a
+    withdrawn resource is gone to everyone, and that is enforced where it matters — in
+    `decide()`, which denies it `not_found`, so no consumer and no byte ever reaches
+    one. This is the organisation looking at its own registry, which is a different
+    question: without it, a provider who deleted the wrong resource has no way to find
+    out, and no way to see that a purge is pending while there is still time to care.
+
+    Until N20 this function refused them outright, while `GET /resources` listed them —
+    the two disagreed, and settling it in favour of the owner is what that resolves.
+    """
     resource = session.get(Resource, resource_id)
-    if resource is None or resource.status is ResourceStatus.WITHDRAWN:
-        # A withdrawn resource is gone as far as any caller is concerned (D25), including
-        # the one who withdrew it. Written now so that N20 does not have to find every
-        # query that forgot.
+    if resource is None:
         raise NodeError(404, Reason.NOT_FOUND, "no such resource")
+    return resource
+
+
+def _active_or_conflict(session: Session, resource_id: uuid.UUID) -> Resource:
+    """…and a withdrawn one cannot be changed.
+
+    `409`, not `404`: the caller can see it, so pretending it is absent would be a
+    worse answer than saying it is on its way out. Editing or re-uploading would
+    quietly resurrect something a purge is already scheduled to remove.
+    """
+    resource = _resource_or_404(session, resource_id)
+    if resource.status is ResourceStatus.WITHDRAWN:
+        raise NodeError(
+            409,
+            Reason.CONFLICT,
+            "this resource is withdrawn and awaiting purge; it cannot be changed",
+        )
     return resource

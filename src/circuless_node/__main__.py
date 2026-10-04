@@ -3,6 +3,7 @@
     circuless-node                 run the node
     circuless-node certificate     print this node's certificate, for registration
     circuless-node check           confirm the node can authenticate to the Cloud
+    circuless-node purge           run one purge pass now (N20), instead of waiting
 
 Shipped as a container image, pinned by digest and signed with cosign (O18, N15). A
 node runs it beside a NetBird agent whose network namespace it shares, so the overlay
@@ -26,6 +27,7 @@ from .identity import (
     KeyPermissionsError,
     load_or_create_keypair,
 )
+from .purge import purge_due, purge_loop
 from .settings import Settings, get_settings
 from .sync import SyncState, sync_loop
 
@@ -73,6 +75,9 @@ async def _serve(settings: Settings) -> None:
         public.serve(),
         internal.serve(),
         sync_loop(settings, internal_app.state.engine, state, version=__version__),
+        # Stage two of deletion (N20). A peer of the sync loop for the same reason:
+        # nothing to schedule on a partner site, and it stops when the node stops.
+        purge_loop(internal_app.state.engine, internal_app.state.storage),
     )
 
 
@@ -100,6 +105,27 @@ def _certificate_command(settings: Settings) -> int:
     print(f"# client_id:   {settings.node_client_id}", file=sys.stderr)
     print(f"# fingerprint: {keypair.fingerprint}", file=sys.stderr)
     print(f"# private key: {keypair.key_path} (stays here, always)", file=sys.stderr)
+    return 0
+
+
+def _purge_command(settings: Settings) -> int:
+    """One purge pass, now (N20).
+
+    The node purges hourly on its own, so this exists for the two cases where waiting is
+    the wrong answer: an operator who has just been asked to confirm that something is
+    gone, and the acceptance test, which has to reach stage two of a two-stage deletion
+    without waiting out the retention period.
+
+    It prints what it removed and nothing when there was nothing due, because a purge
+    that says "0 resources" every hour in a log is a purge nobody reads.
+    """
+    from .db import create_db_engine
+    from .storage import Storage
+
+    purged = purge_due(create_db_engine(settings), Storage(settings))
+    for line in purged:
+        print(f"purged {line}")
+    print(f"{len(purged)} resource(s) purged", file=sys.stderr)
     return 0
 
 
@@ -162,7 +188,7 @@ def main() -> int:
         "command",
         nargs="?",
         default="serve",
-        choices=["serve", "certificate", "check"],
+        choices=["serve", "certificate", "check", "purge"],
     )
     args = parser.parse_args()
     settings = get_settings()
@@ -171,6 +197,7 @@ def main() -> int:
         "serve": _serve_command,
         "certificate": _certificate_command,
         "check": _check_command,
+        "purge": _purge_command,
     }[args.command]
 
     try:
