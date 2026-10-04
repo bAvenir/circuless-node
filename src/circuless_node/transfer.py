@@ -75,7 +75,7 @@ from .decide import Action, decide
 from .errors import NodeError, Reason
 from .models import AgreementCache, Resource, Tenant
 from .resources import tenant_org
-from .storage import Storage, check_relative_path
+from .storage import Storage, check_relative_path, resource_location
 from .subject import Subject
 from .tenancy import tenant_by_slug, tenant_scope
 from .vocabularies import Shape
@@ -147,7 +147,7 @@ def transfer_router() -> APIRouter:
         # would look like an ordinary missing file rather than a refused traversal.
         # `resolve` checks the joined path again; this is about refusing by name.
         check_relative_path(object_path)
-        relative = str(PurePosixPath(resource.storage_path or "") / object_path)
+        relative = resource_location(resource.id, object_path)
         return _file(
             storage,
             request.app.state.engine,
@@ -230,10 +230,9 @@ def _manifest(
     storage: Storage, engine: Engine, tenant: Tenant, resource: Resource, entry_id: uuid.UUID
 ) -> dict:
     """What is in this bucket, as paths that can be handed straight back to `/data/{path}`."""
-    if not resource.storage_path:
-        objects, truncated = [], False
-    else:
-        objects, truncated = storage.list_objects(tenant.id, resource.storage_path, MANIFEST_LIMIT)
+    objects, truncated = storage.list_objects(
+        tenant.id, resource_location(resource.id), MANIFEST_LIMIT
+    )
 
     body = {
         "objects": [
@@ -252,6 +251,16 @@ def _json_size(body: dict) -> int:
     return len(json.dumps(body).encode())
 
 
+def file_location(resource: Resource) -> str:
+    """Where a `shape=file` resource's single file lives, relative to the tenant root.
+
+    Shared with N19 so that what is written and what is read cannot drift apart — the
+    one bug this would otherwise produce is an upload that appears to succeed and a
+    download that reports no data.
+    """
+    return resource_location(resource.id, resource.storage_path or resource.slug)
+
+
 def _file(
     storage: Storage,
     engine: Engine,
@@ -261,14 +270,12 @@ def _file(
     relative_path: str | None = None,
     download_name: str | None = None,
 ) -> StreamingResponse:
-    path = relative_path if relative_path is not None else resource.storage_path
-    if not path:
+    path = relative_path if relative_path is not None else file_location(resource)
+    if not storage.exists(tenant.id, path):
         # Registered but never uploaded. The resource exists and the caller may read it;
         # there is simply nothing there yet. `not_found` with a detail saying so, because
         # to a consumer it is indistinguishable from a path that is not there — while the
         # owner debugging their own upload gets told which it is.
-        raise NodeError(404, Reason.NOT_FOUND, "no data has been uploaded for this resource")
-    if not storage.exists(tenant.id, path):
         raise NodeError(404, Reason.NOT_FOUND, "no data has been uploaded for this resource")
 
     name = download_name or PurePosixPath(path).name

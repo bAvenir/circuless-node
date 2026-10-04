@@ -84,7 +84,19 @@ class Settings(BaseSettings):
     )
     data_dir: Path = Field(
         default=Path("./data"),
-        description="Root for resource content. Each tenant gets data_dir/<tenant_id>/.",
+        description=(
+            "Root for resource content. Each resource gets data_dir/<tenant_id>/<resource_id>/."
+        ),
+    )
+    max_upload_bytes: int = Field(
+        default=1024 * 1024 * 1024,
+        gt=0,
+        description=(
+            "Largest single upload accepted (N19). Enforced twice: on Content-Length "
+            "before anything is read, and again while streaming, because a chunked "
+            "request carries no Content-Length and trusting the header is how the "
+            "check gets skipped."
+        ),
     )
 
     # --- interfaces -------------------------------------------------------------------

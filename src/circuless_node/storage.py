@@ -12,7 +12,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 
 import fsspec
 
@@ -21,6 +21,43 @@ from .settings import Settings
 
 class PathNotAllowedError(ValueError):
     """A resource path escaped its tenant's directory."""
+
+
+def resource_location(resource_id: uuid.UUID, name: str = "") -> str:
+    """Where a resource's bytes live, relative to its tenant's directory.
+
+    **The node owns this layout, not the provider.** Every resource gets its own
+    directory named by its id, so one resource's content is physically disjoint from
+    every other's.
+
+    That is a security property, not tidiness. `storage_path` is provider-supplied, and
+    when it decided the location outright, nothing stopped two resources of the same
+    tenant naming the same file — so a service principal, which N18 lets register
+    resources but not much else, could register a resource with `visibility=agreement`
+    pointing at an existing **private** resource's file and publish it without
+    uploading anything. Deriving the directory from the resource id makes that
+    unsayable: there is no `storage_path` that names another resource's data.
+
+    `storage_path` keeps its job as the *name within* this directory, which is what
+    DCAT wants from it anyway, and defaults to the resource's slug.
+    """
+    return f"{resource_id}/{name}" if name else str(resource_id)
+
+
+#: Where part-written uploads live while they arrive, under the tenant's root and
+#: **outside** every resource directory.
+#:
+#: Outside, deliberately. A staging file inside the resource's own directory would be
+#: listed by `list_objects` as an ordinary object and could be fetched through
+#: `/data/{path}` while it was still being written — serving a half-written file, which
+#: is the one thing staging exists to prevent. Keeping it in a sibling directory makes
+#: that impossible by construction rather than by remembering to filter.
+STAGING_DIR = ".incoming"
+
+
+def staging_location(token: str) -> str:
+    """A temporary name for an arriving upload, relative to the tenant's directory."""
+    return f"{STAGING_DIR}/{token}"
 
 
 @dataclass(frozen=True)
@@ -142,6 +179,18 @@ class Storage:
                 )
             )
         return objects, truncated
+
+    def replace(self, tenant_id: uuid.UUID, source: str, target: str) -> None:
+        """Move an upload into place, atomically.
+
+        Uploads land on a temporary name and are renamed here, so a transfer that fails
+        or runs past the size limit never truncates what was already there — and a
+        concurrent reader (N8) never serves a half-written file. Both paths are inside
+        one tenant's directory, so this is a same-filesystem rename.
+        """
+        resolved_target = self.resolve(tenant_id, target)
+        Path(resolved_target).parent.mkdir(parents=True, exist_ok=True)
+        Path(self.resolve(tenant_id, source)).replace(resolved_target)
 
     def delete(self, tenant_id: uuid.UUID, relative_path: str) -> None:
         target = self.resolve(tenant_id, relative_path)

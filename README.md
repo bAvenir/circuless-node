@@ -401,6 +401,63 @@ The grammar check is also split out as `check_relative_path`, because a caller t
 the perfectly ordinary `https:/evil/x` and the URL rule never fires on what was sent. A
 failing test found that, not a review.
 
+## Receiving the bytes (N19)
+
+```
+PUT /v1/t/{tenant}/resources/{id}/data          a file's bytes
+PUT /v1/t/{tenant}/resources/{id}/data/{path}   one object of a bucket
+```
+
+**The mirror of N8 in the URL and nothing like it in authorisation.** Reading is
+`decide()` — visibility, agreements, acting organisation. Writing is `decide_management`
+(N18): admins **or service principals** of the organisation that owns the tenant. An
+agreement never grants write access, and there is no visibility under which an outsider
+may upload. The two live in separate modules precisely because they share a URL.
+
+### The node owns the layout, and that is a security property
+
+Bytes live at `<tenant_id>/<resource_id>/<name>`. `storage_path` names the file *within*
+that directory and defaults to the slug; it no longer decides the location.
+
+This changed in N19, because the old arrangement had a hole. `storage_path` was
+provider-supplied and confined only to the tenant directory, so **nothing stopped two
+resources of the same tenant naming the same file.** Since N18 lets a service principal
+register resources, a compromised pipeline account could register a resource with
+`visibility=agreement` pointing at an existing **private** resource's path and publish
+its contents — without uploading a byte. Deriving the directory from the resource id
+makes that unsayable: there is no `storage_path` that names another resource's data.
+
+A `storage_path` containing `..` is now refused at registration rather than at first
+upload, so the provider is told when they typed it.
+
+### Nothing is overwritten until it has fully arrived
+
+Every upload streams to a temporary name and is renamed into place only at the end. A
+transfer that fails, or runs past the size limit, leaves the previous bytes exactly as
+they were — which matters because N8 streams straight off disk, so without this a
+refused upload would have truncated a file that readers were mid-way through serving.
+
+The staging file lives in `<tenant_id>/.incoming/`, **outside** every resource
+directory. Inside, it would be listed by a bucket's manifest as an ordinary object and
+could be fetched through `/data/{path}` while still being written — serving exactly the
+half-written file staging exists to prevent. Keeping it in a sibling directory makes
+that impossible by construction rather than by remembering to filter it out.
+
+### The size limit is checked twice
+
+`CIRCULESS_NODE_MAX_UPLOAD_BYTES`, 1 GiB by default. Checked on `Content-Length` before
+anything is read, and **again while streaming** — because a chunked request carries no
+`Content-Length` at all, and a limit that only reads the header is one that any client
+can skip by not sending one. Over the limit is `413 payload_too_large`.
+
+Writes go through `anyio.to_thread`: the handler is async, and a synchronous write of a
+gigabyte would hold the event loop for the whole upload, stalling every other request on
+the node — including the downloads competing for the same disk.
+
+An upload records its byte count in the same AccessLog column a download does, and marks
+the tenant's catalogue dirty, since size and modification date have changed. Marked, not
+pushed — pushing here would make uploads fail whenever the Cloud is unreachable (F16).
+
 ## Who may manage a tenant's resources (N18)
 
 `management.py`, pure and table-tested, like the Cloud's `authz.decide()`:
@@ -656,6 +713,7 @@ src/circuless_node/
     resources.py  N5 registration, the licence and classification rules, the log read
     access_log.py N11 every decision, append-only; the request id middleware
     transfer.py   N8 serving a dataset's bytes, and bucket manifests
+    upload.py     N19 receiving them; staged writes and the size limit
     sync.py       N7 push, pull, heartbeat, and the staleness metrics
     well_known.py N12 what the node publishes about itself
     decide.py     N6 who may read or invoke what, and on whose behalf
@@ -689,6 +747,9 @@ All settings take the `CIRCULESS_NODE_` prefix; see `.env.example`. Two worth kn
 `CIRCULESS_NODE_NODE_ID` is required and must match the Keycloak client scope exactly —
 tokens are accepted only for audience `node:<node_id>`.
 
+`CIRCULESS_NODE_MAX_UPLOAD_BYTES` is the largest single upload accepted (N19), 1 GiB by
+default.
+
 `CIRCULESS_NODE_CORS_ALLOW_ORIGINS` is an exact list and the node **refuses to start** on
 `"*"` (G7). Browser downloads through the gateway are cross-origin and carry a bearer token,
 so a wildcard would let any site spend a user's node token.
@@ -705,9 +766,9 @@ the install guide and overlay address detection, and the remote dry run (Q3) on 
 outside BVR's network.
 
 **M3, in progress:** **N6** `decide()`, **N11** access log, **N8** data transfer and
-H3's path confinement.
+H3's path confinement, **N19** upload.
 
-Next: N19 upload, N20 two-stage deletion, then N10 credentials and N9 proxy.
+Next: N20 two-stage deletion, then N10 credentials and N9 proxy.
 
 Not yet built, and deliberately absent rather than stubbed: uploads and deletion. Deletion is two-stage (D25, N20 in M3), so there is no `DELETE` at all — a
 placeholder that actually removed a row would be the wrong thing to have to take back.

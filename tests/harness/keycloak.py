@@ -78,6 +78,15 @@ def ensure_keycloak(url: str = KEYCLOAK_URL, timeout: float = 180.0) -> str:
     times a day, and a 30-second container start on every run is a tax on that. Leave the
     stack up and the inner loop stays fast; in CI, or from cold, it starts itself.
     """
+
+    #: **One test session at a time against a given Keycloak.** `ensure_keycloak` reuses a
+    #: container that is already running, and the session-scoped `realm` fixture calls
+    #: `FixtureRealm.rebuild()`, which deletes and recreates the realm. Two pytest sessions
+    #: sharing one container therefore destroy each other's clients and keys part-way
+    #: through, and the symptom is a scatter of `400` responses from the token endpoint that
+    #: looks exactly like a flaky test. Run suites sequentially, or give each one its own
+    #: container.
+
     if _is_up(url):
         return url
 
@@ -547,7 +556,13 @@ class FixtureRealm:
             },
             timeout=30.0,
         )
-        response.raise_for_status()
+        if response.status_code != 200:
+            # The body is the whole diagnosis — Keycloak puts `error` and
+            # `error_description` there, and `raise_for_status` alone throws it away,
+            # which turns a one-line cause into an afternoon.
+            raise AssertionError(
+                f"token endpoint refused {client_id}: {response.status_code} {response.text}"
+            )
         return response.json()["access_token"]
 
     def service_token(self, scope: str = "node:test-node") -> str:

@@ -19,6 +19,7 @@ from circuless_node import access_log, transfer
 from circuless_node.app import create_public_app
 from circuless_node.models import AccessLog, AgreementCache, Resource, Tenant
 from circuless_node.settings import Settings
+from circuless_node.storage import resource_location
 from circuless_node.subject import PrincipalType, Subject
 from circuless_node.tenancy import all_tenants, tenant_scope
 from circuless_node.vocabularies import (
@@ -131,13 +132,16 @@ def make_resource(
         session.refresh(resource)
         resource_id = resource.id
 
+    # The node owns the layout (N19): bytes live under the resource's own id, never at
+    # a provider-chosen path. Written through `resource_location` rather than spelled
+    # out, so this fixture cannot drift from what the handlers read.
     storage = app.state.storage
-    if shape is Shape.FILE and content is not None and storage_path:
-        with storage.open(tid, storage_path, "wb") as handle:
-            handle.write(content)
+    if shape is Shape.FILE and content is not None:
+        with storage.open(tid, resource_location(resource_id, storage_path or slug), "wb") as f:
+            f.write(content)
     for relative, payload in (objects or {}).items():
-        with storage.open(tid, f"{storage_path}/{relative}", "wb") as handle:
-            handle.write(payload)
+        with storage.open(tid, resource_location(resource_id, relative), "wb") as f:
+            f.write(payload)
     return resource_id
 
 
@@ -539,7 +543,13 @@ def test_an_abandoned_stream_leaves_bytes_null(app) -> None:
             return session.get(AccessLog, entry_id).bytes
 
     abandoned = entry_for()
-    stream = transfer._stream(app.state.storage, app.state.engine, tid, "batch-7.csv", abandoned)
+    stream = transfer._stream(
+        app.state.storage,
+        app.state.engine,
+        tid,
+        resource_location(resource_id, "batch-7.csv"),
+        abandoned,
+    )
     next(stream)
     stream.close()
     assert bytes_of(abandoned) is None
@@ -547,6 +557,12 @@ def test_an_abandoned_stream_leaves_bytes_null(app) -> None:
     # And the completing case does record, so the assertion above is about the
     # abandonment and not about `record_bytes` being broken.
     completed = entry_for()
-    for _ in transfer._stream(app.state.storage, app.state.engine, tid, "batch-7.csv", completed):
+    for _ in transfer._stream(
+        app.state.storage,
+        app.state.engine,
+        tid,
+        resource_location(resource_id, "batch-7.csv"),
+        completed,
+    ):
         pass
     assert bytes_of(completed) == 200 * 1024

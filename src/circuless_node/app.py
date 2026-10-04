@@ -33,6 +33,7 @@ from .storage import Storage
 from .subject import Subject, resolve_acting_org
 from .sync import SyncState, metrics_text
 from .transfer import transfer_router
+from .upload import upload_router
 from .well_known import node_document
 
 API_PREFIX = "/v1"
@@ -154,6 +155,7 @@ def v1_router() -> APIRouter:
 
     router.include_router(resource_router())
     router.include_router(transfer_router())
+    router.include_router(upload_router())
     return router
 
 

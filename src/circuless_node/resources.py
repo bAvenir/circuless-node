@@ -45,7 +45,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, NamedTuple
 
 from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, model_validator
@@ -58,6 +58,7 @@ from .errors import NodeError, Reason
 from .management import ManagementAction, decide_management
 from .models import CataloguePush, Resource, Tenant
 from .settings import Settings
+from .storage import check_relative_path
 from .subject import Subject, organisations_from_groups
 from .tenancy import tenant_by_slug, tenant_scope
 from .vocabularies import (
@@ -186,15 +187,16 @@ def resource_router() -> APIRouter:
     ) -> dict:
         settings: Settings = request.app.state.settings
         with Session(request.app.state.engine) as session:
-            tenant = _authorised_tenant(
+            tenant = authorised_tenant(
                 request, session, subject, tenant_slug, ManagementAction.RESOURCE_REGISTER
-            )
+            ).tenant
 
             discoverability = body.discoverability or Discoverability.HIDDEN
             visibility = body.visibility or Visibility.ORG
             _check_classification(settings, body.classification)
             _check_discoverability(discoverability)
             _check_licence(body.licence, discoverability)
+            _check_storage_path(body.storage_path)
 
             with tenant_scope(session, tenant.id):
                 if session.exec(select(Resource).where(col(Resource.slug) == body.slug)).first():
@@ -238,9 +240,9 @@ def resource_router() -> APIRouter:
         `visibility=private` is about consumers rather than about them.
         """
         with Session(request.app.state.engine) as session:
-            tenant = _authorised_tenant(
+            tenant = authorised_tenant(
                 request, session, subject, tenant_slug, ManagementAction.RESOURCE_READ
-            )
+            ).tenant
             with tenant_scope(session, tenant.id):
                 found = session.exec(select(Resource).order_by(col(Resource.slug))).all()
                 return [resource_out(resource) for resource in found]
@@ -253,14 +255,14 @@ def resource_router() -> APIRouter:
         subject: Subject = Depends(require_subject),
     ) -> dict:
         with Session(request.app.state.engine) as session:
-            tenant = _authorised_tenant(
+            tenant = authorised_tenant(
                 request,
                 session,
                 subject,
                 tenant_slug,
                 ManagementAction.RESOURCE_READ,
                 resource_id=resource_id,
-            )
+            ).tenant
             with tenant_scope(session, tenant.id):
                 return resource_out(_resource_or_404(session, resource_id))
 
@@ -274,14 +276,14 @@ def resource_router() -> APIRouter:
     ) -> dict:
         settings: Settings = request.app.state.settings
         with Session(request.app.state.engine) as session:
-            tenant = _authorised_tenant(
+            tenant = authorised_tenant(
                 request,
                 session,
                 subject,
                 tenant_slug,
                 ManagementAction.RESOURCE_UPDATE,
                 resource_id=resource_id,
-            )
+            ).tenant
             with tenant_scope(session, tenant.id):
                 resource = _resource_or_404(session, resource_id)
 
@@ -296,6 +298,7 @@ def resource_router() -> APIRouter:
                 _check_classification(settings, resource.classification)
                 _check_discoverability(resource.discoverability)
                 _check_licence(resource.licence, resource.discoverability)
+                _check_storage_path(resource.storage_path)
 
                 resource.updated_at = datetime.now(UTC)
                 session.add(resource)
@@ -325,9 +328,9 @@ def resource_router() -> APIRouter:
         an operator who needs the whole thing has the database.
         """
         with Session(request.app.state.engine) as session:
-            tenant = _authorised_tenant(
+            tenant = authorised_tenant(
                 request, session, subject, tenant_slug, ManagementAction.ACCESS_LOG_READ
-            )
+            ).tenant
             with tenant_scope(session, tenant.id):
                 found = access_log.entries(
                     session,
@@ -384,6 +387,21 @@ def _check_discoverability(discoverability: Discoverability) -> None:
         )
 
 
+def _check_storage_path(storage_path: str | None) -> None:
+    """The file's name inside its own directory — checked when it is typed, not when
+    it is used.
+
+    Since N19 the node owns the layout: bytes live at `<tenant>/<resource_id>/<name>`
+    and `storage_path` is only the name within that directory. Confinement still holds
+    whatever is stored here, because `Storage.resolve` checks the joined path — but
+    refusing a `..` at registration tells the provider at the moment they got it wrong,
+    rather than at the first upload.
+    """
+    if storage_path is None:
+        return
+    check_relative_path(storage_path)
+
+
 def _check_licence(licence: str | None, discoverability: Discoverability) -> None:
     """NFR9. A licence from the controlled list is required before publishing."""
     if licence is not None and licence not in LICENCES:
@@ -418,14 +436,25 @@ def mark_catalogue_dirty(session: Session, tenant_id: uuid.UUID) -> None:
 # --- helpers ------------------------------------------------------------------------------------
 
 
-def _authorised_tenant(
+class Authorised(NamedTuple):
+    """What `authorised_tenant` hands back: the tenant, and the log entry it just wrote.
+
+    The entry id is here so that an upload (N19) can fill in `bytes` once the body has
+    arrived. Everything else ignores it.
+    """
+
+    tenant: Tenant
+    entry_id: uuid.UUID
+
+
+def authorised_tenant(
     request: Request,
     session: Session,
     subject: Subject,
     tenant_slug: str,
     action: ManagementAction,
     resource_id: uuid.UUID | None = None,
-) -> Tenant:
+) -> Authorised:
     """Resolve the tenant in the path, decide whether this caller may act on it, log it.
 
     All three, in this order, every time. Resolving alone gives a correctly-scoped query
@@ -447,7 +476,7 @@ def _authorised_tenant(
     owner = tenant_org(tenant)
     decision = decide_management(subject, action, owner)
 
-    access_log.record(
+    entry_id = access_log.record(
         request.app.state.engine,
         tenant_id=tenant.id,
         request_id=access_log.request_id_of(request),
@@ -464,7 +493,7 @@ def _authorised_tenant(
 
     if not decision.allowed:
         raise NodeError(403, decision.reason or Reason.NOT_PERMITTED, decision.detail)
-    return tenant
+    return Authorised(tenant, entry_id)
 
 
 def tenant_org(tenant: Tenant) -> str:
