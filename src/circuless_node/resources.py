@@ -1,4 +1,4 @@
-"""Registering datasets and services (N5, F3, F4), and who may (N18).
+"""Registering datasets and services (N5, F3, F4), who may (N18), and the record of it (N11).
 
 The provider sends typed fields; the node composes the DCAT-AP record from them (`dcat`).
 That is what makes the licence rule enforceable and the catalogue searchable — "has a
@@ -17,6 +17,15 @@ without a licence from `vocabularies.LICENCES` is refused.
 
 **A BVR-operated node refuses `sensitive`** (D22, H3), and defaults to being one — see
 `settings.NodeOperator`. The permissive value is the one somebody has to type.
+
+## Every management decision is logged, in one place
+
+`_authorised_tenant` resolves the tenant, decides, and records — all three, every time.
+It calls `decide_management` and raises the refusal itself rather than calling
+`enforce_management`, because it needs the denial in its hands to log before it becomes
+an exception. The logging lives there and not in each handler for the same reason the
+tenant filter lives in one session listener: a guarantee that eight call sites have to
+remember is not a guarantee.
 
 ## What is not here
 
@@ -38,14 +47,15 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, model_validator
 from pydantic import Field as PydanticField
 from sqlmodel import Session, col, select
 
+from . import access_log
 from .auth import require_subject
 from .errors import NodeError, Reason
-from .management import ManagementAction, enforce_management
+from .management import ManagementAction, decide_management
 from .models import CataloguePush, Resource, Tenant
 from .settings import Settings
 from .subject import Subject, organisations_from_groups
@@ -177,7 +187,7 @@ def resource_router() -> APIRouter:
         settings: Settings = request.app.state.settings
         with Session(request.app.state.engine) as session:
             tenant = _authorised_tenant(
-                session, subject, tenant_slug, ManagementAction.RESOURCE_REGISTER
+                request, session, subject, tenant_slug, ManagementAction.RESOURCE_REGISTER
             )
 
             discoverability = body.discoverability or Discoverability.HIDDEN
@@ -229,7 +239,7 @@ def resource_router() -> APIRouter:
         """
         with Session(request.app.state.engine) as session:
             tenant = _authorised_tenant(
-                session, subject, tenant_slug, ManagementAction.RESOURCE_READ
+                request, session, subject, tenant_slug, ManagementAction.RESOURCE_READ
             )
             with tenant_scope(session, tenant.id):
                 found = session.exec(select(Resource).order_by(col(Resource.slug))).all()
@@ -244,7 +254,12 @@ def resource_router() -> APIRouter:
     ) -> dict:
         with Session(request.app.state.engine) as session:
             tenant = _authorised_tenant(
-                session, subject, tenant_slug, ManagementAction.RESOURCE_READ
+                request,
+                session,
+                subject,
+                tenant_slug,
+                ManagementAction.RESOURCE_READ,
+                resource_id=resource_id,
             )
             with tenant_scope(session, tenant.id):
                 return resource_out(_resource_or_404(session, resource_id))
@@ -260,7 +275,12 @@ def resource_router() -> APIRouter:
         settings: Settings = request.app.state.settings
         with Session(request.app.state.engine) as session:
             tenant = _authorised_tenant(
-                session, subject, tenant_slug, ManagementAction.RESOURCE_UPDATE
+                request,
+                session,
+                subject,
+                tenant_slug,
+                ManagementAction.RESOURCE_UPDATE,
+                resource_id=resource_id,
             )
             with tenant_scope(session, tenant.id):
                 resource = _resource_or_404(session, resource_id)
@@ -283,6 +303,44 @@ def resource_router() -> APIRouter:
                 session.commit()
                 session.refresh(resource)
                 return resource_out(resource)
+
+    @router.get("/t/{tenant_slug}/access-log")
+    def read_access_log(
+        request: Request,
+        tenant_slug: str,
+        limit: int = Query(default=100, ge=1, le=1000),
+        offset: int = Query(default=0, ge=0),
+        resource_id: uuid.UUID | None = None,
+        decision: str | None = Query(default=None, pattern="^(allow|deny)$"),
+        subject: Subject = Depends(require_subject),
+    ) -> dict:
+        """Every decision this node made about this tenant's resources (N11).
+
+        Admins of the owning organisation only, which `decide_management` enforces —
+        and this read is itself a management decision, so it appears in the log it
+        returns. That is intended: "who has been reading the access log" is exactly the
+        sort of question an access log should be able to answer about itself.
+
+        Newest first, and paged rather than streamed: this is an investigation tool, and
+        an operator who needs the whole thing has the database.
+        """
+        with Session(request.app.state.engine) as session:
+            tenant = _authorised_tenant(
+                request, session, subject, tenant_slug, ManagementAction.ACCESS_LOG_READ
+            )
+            with tenant_scope(session, tenant.id):
+                found = access_log.entries(
+                    session,
+                    limit=limit,
+                    offset=offset,
+                    resource_id=resource_id,
+                    decision=decision,
+                )
+                return {
+                    "entries": [access_log.entry_out(entry) for entry in found],
+                    "limit": limit,
+                    "offset": offset,
+                }
 
     return router
 
@@ -361,16 +419,51 @@ def mark_catalogue_dirty(session: Session, tenant_id: uuid.UUID) -> None:
 
 
 def _authorised_tenant(
-    session: Session, subject: Subject, tenant_slug: str, action: ManagementAction
+    request: Request,
+    session: Session,
+    subject: Subject,
+    tenant_slug: str,
+    action: ManagementAction,
+    resource_id: uuid.UUID | None = None,
 ) -> Tenant:
-    """Resolve the tenant in the path, then decide whether this caller may act on it.
+    """Resolve the tenant in the path, decide whether this caller may act on it, log it.
 
-    Both halves, in this order, every time. Resolving alone gives a correctly-scoped
-    query for an organisation the caller has nothing to do with — which is exactly the
-    hole `tenancy.py` warns about: scoping is not authorisation.
+    All three, in this order, every time. Resolving alone gives a correctly-scoped query
+    for an organisation the caller has nothing to do with — which is exactly the hole
+    `tenancy.py` warns about: scoping is not authorisation.
+
+    The logging lives here rather than in each handler, for the same reason the tenant
+    filter lives in one session listener: a guarantee that each of eight call sites has
+    to remember is not a guarantee. This is why the function calls `decide_management`
+    and raises itself, instead of calling `enforce_management` — it needs the denial in
+    its hands to record before it becomes an exception.
+
+    **An unknown tenant is not logged.** There is no tenant to own the entry, and
+    `AccessLog` is tenant-owned by design; more to the point, "someone asked about a
+    tenant we do not host" is a fact about this node, not a decision about anyone's
+    resources. It is a 404 from `tenant_by_slug` and goes no further.
     """
     tenant = tenant_by_slug(session, tenant_slug)
-    enforce_management(subject, action, tenant_org(tenant))
+    owner = tenant_org(tenant)
+    decision = decide_management(subject, action, owner)
+
+    access_log.record(
+        request.app.state.engine,
+        tenant_id=tenant.id,
+        request_id=access_log.request_id_of(request),
+        action=action.value,
+        subject=subject,
+        allowed=decision.allowed,
+        reason=decision.reason,
+        resource_id=resource_id,
+        # On a management allow, the organisation acted for is the tenant's owner — that
+        # is what `decide_management` checked membership of, and there is no choice to
+        # resolve (R11). Null on a denial: nothing of the caller's was accepted.
+        acting_org=owner if decision.allowed else None,
+    )
+
+    if not decision.allowed:
+        raise NodeError(403, decision.reason or Reason.NOT_PERMITTED, decision.detail)
     return tenant
 
 

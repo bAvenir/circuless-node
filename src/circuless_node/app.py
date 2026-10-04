@@ -23,6 +23,7 @@ from fastapi import APIRouter, Depends, FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import __version__
+from .access_log import install_request_id
 from .auth import TokenVerifier, requested_acting_org, require_subject
 from .db import create_db_engine
 from .errors import NodeError, install_error_handlers
@@ -70,6 +71,9 @@ def create_public_app(settings: Settings | None = None) -> FastAPI:
     )
     _attach_resources(app, settings)
     install_error_handlers(app)
+    # Outermost, so every response carries the id — including the 401s and 403s, which
+    # are the ones someone asking "what happened to my request" most often has in hand.
+    install_request_id(app)
 
     if settings.cors_allow_origins:
         # Browser download through the gateway is cross-origin and sends Authorization,
@@ -155,6 +159,10 @@ def create_internal_app(settings: Settings | None = None) -> FastAPI:
     )
     _attach_resources(app, settings)
     install_error_handlers(app)
+    # On the internal app too. Nothing here writes an AccessLog entry — `/internal/authz`
+    # must not (R7) — but an operator correlating a gateway trace with this node's logs
+    # needs the same id on both sockets.
+    install_request_id(app)
 
     @app.get("/healthz", status_code=200)
     def healthz() -> Response:

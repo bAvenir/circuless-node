@@ -360,7 +360,58 @@ redirect where the node fetches from.
 
 **Scoping is not authorisation.** N4 guarantees a query about tenant A returns only tenant
 A's rows; it says nothing about whether this caller may act on tenant A at all. Every
-handler resolves the tenant and *then* calls `enforce_management`, in that order.
+handler resolves the tenant and *then* decides, in that order — both in
+`_authorised_tenant`, which is also where the decision gets logged (N11), so none of the
+three can be forgotten at one call site.
+
+## Every decision is recorded (N11)
+
+`GET /v1/t/{tenant}/access-log`, for that organisation's admins. One row per decision —
+allow and deny, consumption and management — carrying the request id, resource, action,
+pseudonymous `sub`, principal type, actor (`azp`), acting org, decision, reason and bytes.
+
+Three things about it are worth knowing before you read the code.
+
+**It is written outside the request's transaction.** `access_log.record()` takes the
+*engine*, not a `Session`, and that signature is the guarantee rather than an
+inconvenience. A denial is followed by a raised `NodeError`, the handler's session exits
+without committing, and an entry written through it would be rolled back — so sharing the
+transaction would record every allow and silently lose every deny, which is backwards.
+This is the opposite of the Cloud's audit log (C18), which *does* share the caller's
+transaction: an entry there describes a change, and an entry describing a rolled-back
+change would be a lie. An entry here describes a decision, which happened regardless.
+
+**Append-only is a trigger, not a habit.** `bytes` is the single exception and is
+write-once: a transfer's size is only known once it has streamed, but the entry has to
+exist before it starts, or a connection dropped mid-stream would leave no record that
+access was granted at all. The migration's trigger permits exactly one null-to-value
+write and refuses everything else — a second `bytes` write, any other column, any delete.
+Measured against SQLite before it was written.
+
+That matters for the tests: `SQLModel.metadata.create_all` creates tables, **not**
+triggers, so a suite built the usual way would assert append-only against a database that
+has no such rule and pass while testing nothing. `tests/harness/migrated.py` exists for
+that reason, and `test_access_log.py` is the one suite that runs the real migrations.
+Dropping the triggers fails 15 of its tests, which is how we know they are not vacuous.
+
+**The request id is always minted here** and returned as `X-CIRCULess-Request-Id`, never
+read from an inbound header. An id the caller chooses can be repeated or collided with
+somebody else's, and the one thing this field has to be good for is finding every entry
+belonging to one request — during an investigation of that caller.
+
+A few consequences that look odd until you see why:
+
+- A cross-org attempt is recorded against **the tenant it targeted**, not the caller's.
+  The organisation entitled to ask "who has been trying my data" is the one whose data it is.
+- Reading the log is itself a management decision, so it appears in the log it returns.
+- An unknown tenant is **not** logged: there is no organisation the entry could belong to,
+  and "someone asked about a tenant we do not host" is a fact about this node rather than
+  a decision about anyone's resources.
+- Entries survive N20's purge (D25). `resource_id` therefore often names something that no
+  longer exists, which is correct — an audit answers what happened, not what is still there.
+- **Never a name or an email** (D31). `subject_sub` is Keycloak's UUID; node-audienced
+  tokens carry neither claim, and a test asserts the outcome rather than trusting the realm
+  setting that produces it.
 
 ## Running it on the overlay (N15)
 
@@ -543,7 +594,8 @@ src/circuless_node/
     settings.py   configuration; refuses a wildcard CORS origin
     models.py     tenant-owned vs node-global tables (R10)
     tenancy.py    the central tenant filter, and the scopes that drive it
-    resources.py  N5 registration, and the rules on licence and classification
+    resources.py  N5 registration, the licence and classification rules, the log read
+    access_log.py N11 every decision, append-only; the request id middleware
     sync.py       N7 push, pull, heartbeat, and the staleness metrics
     well_known.py N12 what the node publishes about itself
     decide.py     N6 who may read or invoke what, and on whose behalf
@@ -587,13 +639,14 @@ so a wildcard would let any site spend a user's node token.
 harness, **N2** token verification, **N3** subject resolver, **N4** tenancy, **N17** node
 self-authentication.
 
-**M2, in progress:** **N5** resource registry, **N18** management authorization, **N7**
-sync client, **N12** `/.well-known/circuless-node`.
+**M2, complete:** **N5** resource registry, **N18** management authorization, **N7**
+sync client, **N12** `/.well-known/circuless-node`, **N15** the image, the overlay stack,
+the install guide and overlay address detection, and the remote dry run (Q3) on a machine
+outside BVR's network.
 
-**N15** complete: the image, the overlay stack, the install guide, overlay address
-detection, and `check` reporting all three answers at once.
+**M3, in progress:** **N6** `decide()`, **N11** access log.
 
-Next: the remote dry run (Q3) on a machine outside BVR's network.
+Next: N8 transfer, N19 upload, N20 two-stage deletion, then N10 credentials and N9 proxy.
 
 Not yet built, and deliberately absent rather than stubbed: uploads and deletion. Deletion is two-stage (D25, N20 in M3), so there is no `DELETE` at all — a
 placeholder that actually removed a row would be the wrong thing to have to take back.

@@ -11,7 +11,7 @@ Two families, and the difference is load-bearing (R10):
 Alembic runs from the first model, so every later table comes as a migration rather than
 a schema edit someone applied by hand.
 
-Still to arrive: `ServiceCredential` (N10) and `AccessLog` (N11).
+Still to arrive: `ServiceCredential` (N10).
 """
 
 from __future__ import annotations
@@ -260,3 +260,71 @@ class AgreementCache(SQLModel, table=True):
 
     def permits(self, action: str) -> bool:
         return action in self.actions.split(",")
+
+
+class AccessLog(TenantOwned, table=True):
+    """Every decision this node made, allow and deny (N11, invariant 12, F17).
+
+    **Tenant-owned**, so N4's filter covers it by shape: an organisation's admins read
+    their own log and cannot see another's, without any handler writing a filter.
+
+    ## Append-only, with one exception that is enforced rather than promised
+
+    A recorded decision can never be altered or removed. `bytes` is the single exception
+    and is write-once: it is only known after a transfer has streamed, and the entry has
+    to exist before that or a connection dropped mid-stream would leave no record that
+    access was ever granted.
+
+    The migration's triggers enforce exactly that — `bytes` null to a value once,
+    nothing else ever, no deletes. Measured on SQLite rather than assumed.
+
+    ## Pseudonymous, and it stays that way
+
+    `subject_sub` is Keycloak's UUID. **Never a name or an email** (D31): node tokens do
+    not carry them, and a log that grew them would become the thing it protects. Names
+    are resolved at display time, by whoever is entitled to see them, and never stored
+    here.
+
+    ## It outlives what it describes
+
+    N20's purge removes a withdrawn resource's data and metadata after the retention
+    period; these entries stay. `resource_id` therefore often points at something that
+    no longer exists, which is correct — the question an audit answers is what happened,
+    not what is still there.
+    """
+
+    __tablename__ = "access_log"
+
+    id: uuid.UUID = Field(default_factory=_uuid, primary_key=True)
+    ts: datetime = Field(default_factory=_now, index=True)
+
+    #: Minted by this node per request and echoed in the response, never taken from an
+    #: inbound header: an id the caller controls can be repeated or collided with, which
+    #: is worth something to whoever is being investigated.
+    request_id: str = Field(index=True, max_length=64)
+
+    #: Null for management actions that name no resource — listing, for instance.
+    resource_id: uuid.UUID | None = Field(default=None, index=True)
+
+    #: `read` or `invoke` for consumption, or a `ManagementAction` value. One column,
+    #: because "what did they try to do" is one question.
+    action: str = Field(index=True, max_length=32)
+
+    subject_sub: str = Field(index=True, max_length=255)
+    principal_type: str = Field(max_length=16)
+    #: `azp` — the client the token was issued to, and the only trace of a service
+    #: acting on someone's behalf, since token exchange carries no `act` claim (Q2).
+    actor_azp: str | None = Field(default=None, max_length=255)
+    #: On whose behalf (R11). Null where nothing of the caller's is what permitted it —
+    #: `public` visibility — and on a denial that never got that far.
+    acting_org: str | None = Field(default=None, index=True, max_length=64)
+
+    #: `allow` or `deny`. A string rather than a boolean so a reader of the raw table
+    #: cannot mistake which way round it is.
+    decision: str = Field(index=True, max_length=8)
+    #: The reason code on a denial, from the one enum. Null on an allow.
+    reason: str | None = Field(default=None, max_length=64)
+
+    #: Write-once, and only for transfers. Null means "not a transfer, or it never
+    #: completed" — the two are distinguished by `decision`.
+    bytes: int | None = Field(default=None)
