@@ -57,6 +57,7 @@ from .auth import require_subject
 from .errors import NodeError, Reason
 from .management import ManagementAction, decide_management
 from .models import CataloguePush, Resource, ServiceCredential, Tenant
+from .policy import check_upstream_url, parse_invoke_policy
 from .settings import Settings
 from .storage import check_relative_path
 from .subject import Subject, organisations_from_groups
@@ -201,6 +202,7 @@ def resource_router() -> APIRouter:
             _check_discoverability(discoverability)
             _check_licence(body.licence, discoverability)
             _check_storage_path(body.storage_path)
+            _check_service(body.endpoint_url, body.invoke_policy)
 
             with tenant_scope(session, tenant.id):
                 if session.exec(select(Resource).where(col(Resource.slug) == body.slug)).first():
@@ -303,6 +305,7 @@ def resource_router() -> APIRouter:
                 _check_discoverability(resource.discoverability)
                 _check_licence(resource.licence, resource.discoverability)
                 _check_storage_path(resource.storage_path)
+                _check_service(resource.endpoint_url, resource.invoke_policy)
 
                 resource.updated_at = datetime.now(UTC)
                 session.add(resource)
@@ -451,6 +454,22 @@ def _check_discoverability(discoverability: Discoverability) -> None:
             "discoverability 'public' is reserved for later and is not available in "
             "the beta; use 'catalogue', which every authenticated participant can see",
         )
+
+
+def _check_service(endpoint_url: str | None, invoke_policy: dict | None) -> None:
+    """A service's endpoint and policy, checked when the provider types them (N9).
+
+    `check_upstream_url` without resolution here — the refusal should reach the person
+    who wrote the address, and registration should not depend on DNS or on the service
+    existing yet. N9 checks again, with resolution, every time it calls.
+
+    `parse_invoke_policy` likewise: an unvalidated policy would surface as a failure on
+    some consumer's request weeks later, looking like the node's fault rather than a
+    typo in a registration script.
+    """
+    if endpoint_url:
+        check_upstream_url(endpoint_url)
+    parse_invoke_policy(invoke_policy)
 
 
 def _check_storage_path(storage_path: str | None) -> None:

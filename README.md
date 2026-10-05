@@ -458,6 +458,95 @@ An upload records its byte count in the same AccessLog column a download does, a
 the tenant's catalogue dirty, since size and modification date have changed. Marked, not
 pushed — pushing here would make uploads fail whenever the Cloud is unreachable (F16).
 
+## Calling a partner's service (N9)
+
+```
+ANY /v1/t/{tenant}/resources/{id}/invoke/{path}
+```
+
+Authorised by `decide()` exactly like a download — an agreement that permits `invoke` is
+what gets you here — and then the node, not the caller, decides what the upstream sees.
+
+### The request is built, not forwarded
+
+That distinction is invariant 10 and it is the whole component. A proxy that passes a
+request along passes along whatever the caller put in it; this one starts from nothing.
+
+**Stripped** — `Authorization`, `Cookie`, `Host`, hop-by-hop, and **every inbound
+`X-CIRCULess-*`**. That last one matters most: those headers are how the node tells the
+upstream who is calling, and the upstream cannot tell the node's word from the caller's.
+Without the strip, a consumer sends `X-CIRCULess-Org: someone-else` and the partner's
+service simply believes it. `Authorization` goes for the mirror reason — the caller's
+token is for *this* node, and a partner's service given it could replay it here.
+
+**Injected** — the credential (N10), plus `-Subject`, `-Org`, `-Resource`, `-Request-Id`,
+`-Actor`.
+
+**Forwarded** — `Content-Type`, `Accept`, `Content-Length`, `Idempotency-Key`; and
+`Mcp-Session-Id`, `Mcp-Protocol-Version`, `Last-Event-ID` only when the resource is
+`streaming`.
+
+The response is an allowlist too, which the invariant does not spell out but needs one:
+otherwise the proxy becomes a way to set headers on the node's origin. **`Set-Cookie` is
+stripped** — a partner's service setting a cookie through the node would be a
+session-fixation and CSRF vector aimed at every *other* tenant's endpoints on the same
+host. `Server` and `X-Powered-By` go too; they only say what the upstream runs.
+
+`Location` is rewritten to the node's own `/invoke` when it points inside the upstream,
+and **refused** when it points anywhere else — a redirect to a third party would take the
+consumer out from behind the node, past `decide()`, past the agreement and past the log.
+`202` passes through untouched; the node holds no job state.
+
+### `endpoint_url` is an SSRF surface, and is treated as one
+
+This is the first code that makes the node connect to a **provider-supplied address**.
+The node runs its internal socket on loopback — `/internal/authz`, `/metrics`, the docs —
+which R8 requires to be unreachable through the gateway. Without a guard, a provider
+registers `http://127.0.0.1:8001` and any consumer holding an agreement reads that socket
+from outside, through `/invoke`, with an ordinary token. Link-local
+(`169.254.169.254`) is the cloud metadata service, which on a Hetzner host hands out
+credentials.
+
+So loopback, link-local and unspecified addresses are refused **twice**: at registration
+on the literal text, so the provider is told when they typed it and registration does not
+depend on DNS; and again at call time with resolution, because a hostname that pointed at
+a partner's server yesterday can point at `127.0.0.1` today.
+
+**Private address space stays allowed** — `http://optimiser.internal:8080` is the ordinary
+case and D20 puts services on private networks deliberately. The line is drawn at
+addresses that can only ever mean "this machine".
+
+*Residual, stated rather than hidden:* between resolving and connecting, DNS can change
+again. Closing that needs the resolved address pinned into the connection while keeping
+the hostname for TLS — more machinery than the beta earns, against an attacker who
+already controls a provider admin account and its DNS.
+
+### `invoke_policy` is typed now
+
+It was an opaque JSON column, so a provider could register `{"timeout_s": "banana"}` and
+the failure landed on a consumer's request weeks later, looking like the node's fault.
+It is validated at registration: `timeout_s` (30), `stream_timeout_s` (300), `async`,
+`max_request_bytes` (10 MiB), `streaming`, and `idempotent_methods`.
+
+**`idempotent_methods` is a method allowlist**, defaulting to `GET, POST, HEAD, OPTIONS` —
+anything else is refused before the node connects, so changing a partner's state with
+`PUT`, `PATCH` or `DELETE` is something a provider opts into. The design's name reads as
+"methods safe to repeat"; the agreed behaviour is the stricter one, and **the node never
+retries anything**, so a dropped connection is an honest `502`. The field is narrower
+than its name and the design should say so.
+
+### Bodies
+
+Responses are relayed with `aiter_bytes`, not `aiter_raw`. Raw would pass the upstream's
+bytes through untouched, which is normally what a proxy wants — but `Content-Encoding` is
+not on the response allowlist, so a gzipped upstream would arrive as compressed bytes
+labelled as plain ones. Decoding costs the node some CPU; relaying raw would mean
+forwarding the encoding headers and keeping `Content-Length` consistent, which is a bigger
+contract than the beta needs.
+
+Request bodies are buffered, not streamed, because the node has to count them to enforce
+`max_request_bytes`. A service call is not a file upload — N19 streams, this does not.
+
 ## The credential to somebody else's service (N10)
 
 ```
@@ -842,6 +931,8 @@ src/circuless_node/
     upload.py     N19 receiving them; staged writes and the size limit
     purge.py      N20 stage two: removing what a withdrawal scheduled
     credentials.py  N10 upstream secrets: the Fernet key, and the header N9 sends
+    policy.py     N9 invoke_policy, and where the node may be sent
+    proxy.py      N9 the service proxy: what the upstream sees, and what comes back
     sync.py       N7 push, pull, heartbeat, and the staleness metrics
     well_known.py N12 what the node publishes about itself
     decide.py     N6 who may read or invoke what, and on whose behalf
@@ -901,12 +992,9 @@ outside BVR's network.
 
 **M3, in progress:** **N6** `decide()`, **N11** access log, **N8** data transfer and
 H3's path confinement, **N19** upload, **N20** two-stage deletion, **N10** service
-credentials.
+credentials, **N9** the service proxy. **M3's node work is complete.**
 
-Next: N9, the service proxy — the last of M3's node work, and the other half of
-`invoke`.
+Next: M4 — **N13** admin UI and **N16** packaging — plus the reference service and
+integration requirements that replaced X3/X4.
 
-Not yet built, and deliberately absent rather than stubbed: the `invoke` proxy (N9). A
-service resource can be registered, appears in the catalogue as a `dcat:DataService`, and
-can hold a credential; calling one is refused as `unsupported` until N9, rather than
-proxied to nowhere.
+Not yet built: the admin UI (N13) and packaging (N16), both M4.

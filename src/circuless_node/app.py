@@ -28,6 +28,7 @@ from .auth import TokenVerifier, requested_acting_org, require_subject
 from .credentials import credential_router
 from .db import create_db_engine
 from .errors import NodeError, install_error_handlers
+from .proxy import proxy_router
 from .resources import resource_router
 from .settings import Settings, get_settings
 from .storage import Storage
@@ -158,6 +159,7 @@ def v1_router() -> APIRouter:
     router.include_router(transfer_router())
     router.include_router(upload_router())
     router.include_router(credential_router())
+    router.include_router(proxy_router())
     return router
 
 
