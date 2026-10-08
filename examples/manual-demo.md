@@ -66,8 +66,8 @@ cd ../circuless-node/examples
 export CIRCULESS_NODE_ISSUER=https://auth.circuless.bavenir.eu/realms/circuless
 export REFERENCE_SERVICE_KEY=$(openssl rand -hex 24)
 
-docker compose -f docker-compose.demo.yml up -d --build
-docker compose -f docker-compose.demo.yml ps                                # both healthy
+docker compose -f docker-compose.demo.yml up -d --build      # no service name
+docker compose -f docker-compose.demo.yml ps                # both healthy
 curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8000/v1/whoami    # 401
 ```
 
@@ -124,7 +124,8 @@ SVC=$(curl -s -X POST $N/v1/t/beta/resources -H "Authorization: Bearer $BETA" \
   -H 'Content-Type: application/json' -d '{
     "slug":"csv-tools","kind":"service","title":"CSV tools","theme":"processing",
     "classification":"non-sensitive","licence":"CC-BY-4.0",
-    "visibility":"agreement","endpoint_url":"http://reference-service:8080"
+    "discoverability":"catalogue","visibility":"agreement",
+    "endpoint_url":"http://reference-service:8080"
   }' | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
 echo "service: $SVC"
 
@@ -135,6 +136,15 @@ curl -s -X PUT $N/v1/t/beta/resources/$SVC/credential -H "Authorization: Bearer 
 
 An organisation's **admins** set a credential, never an automated account, and no
 interface returns the value afterwards.
+
+`discoverability: catalogue` is what would publish this service so another organisation
+could *find* it — the Cloud catalogue carries the resource id and the node that hosts
+it, which is how a consumer learns both. It will not actually be published here: the
+push needs this node registered with the Cloud, and it is not. In this walkthrough Beta
+simply tells Alpha the id, which is also how a bilateral agreement usually starts.
+
+The default is `hidden` (NFR4 — defaults are closed), so omitting this field leaves a
+resource that nobody can discover.
 
 ## 6. Alpha registers and uploads its data
 
@@ -208,9 +218,16 @@ Open `http://127.0.0.1:5173/` and fill in:
 | Node base URL | `http://127.0.0.1:8000` |
 | Node audience | `node:bvr-cloud` |
 | Data tenant / Service tenant | `alpha` / `beta` |
-| Dataset / Service resource id | from steps 5 and 6, or use **List resources** |
+| Dataset resource id | from step 6, or **List resources I administer** |
+| Service resource id | from step 5 — paste it; see below |
 
 Sign in **as alpha.admin**, then *Download, then extract headers*.
+
+**Listing Beta's resources returns 403, and that is correct.** Listing is a management
+call — the owner's view of their own registry — so only an administrator of that
+organisation may ask. An agreement lets Alpha *use* Beta's service; it never lets Alpha
+enumerate what else Beta has. A consumer finds a service through the catalogue, which
+shows what its owner chose to publish. Paste the service id from step 5.
 
 Watch the token panel. It shows one access token per audience, minted from a single
 refresh token — and, in red, the `aud` of the token it threw away from sign-in: the one
@@ -258,11 +275,13 @@ That is the claim this example exists to demonstrate.
 |---|---|
 | `401 invalid_token` on a token that looks fine | wrong audience. The node wants `aud = node:bvr-cloud` exactly; a Cloud token or a multi-audience token is refused |
 | `403 not_permitted` invoking | you are signed in as the wrong user. Alpha consumes; Beta owns |
+| `403 not_permitted … not a member of the organisation that owns this tenant` when **listing** | expected. Listing is an owner's call; an agreement does not grant it. Paste the resource id instead |
 | `403 no_agreement` after step 8 | the agreement names a different `resource_id`. Check `$SVC` |
 | `401` from the service, passed through | the node's stored credential and `REFERENCE_SERVICE_KEY` differ. Re-run step 5 |
 | `422 … internal socket` | `endpoint_url` resolves to loopback. Use the container name |
 | the browser shows a network error, not a status | CORS. The node's allowed origins must include `http://127.0.0.1:5173` |
 | sync errors in the node's log | expected; the node is not registered with the Cloud |
+| `502 upstream_error: the upstream address could not be resolved` | the service container is not running. `docker compose -f docker-compose.demo.yml ps` — bring everything up with `up -d`, without naming a service |
 
 ## Tearing down
 

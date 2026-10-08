@@ -65,6 +65,13 @@ services:
     depends_on:
       node-migrate:
         condition: service_completed_successfully
+      # The node does not need the service to start, and in a deployment there is no
+      # such dependency. It is here so that `up -d node` cannot bring the node up
+      # without it: the node would then answer every invoke with
+      # `upstream_error: the upstream address could not be resolved`, which reads like
+      # a configuration mistake and is really just a container that is not running.
+      reference-service:
+        condition: service_healthy
     environment:
       # Must match an audience scope in the realm: node:bvr-cloud or node:alpha-onprem.
       # The node accepts a token only when `aud` is exactly `node:<this value>`.

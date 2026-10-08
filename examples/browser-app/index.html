@@ -56,8 +56,15 @@
 <div id="tokens"><p class="note">Not signed in.</p></div>
 
 <h2>Resources</h2>
-<button id="listData">List data resources</button>
-<button id="listSvc">List service resources</button>
+<p class="note">
+  Listing a tenant's resources is a <em>management</em> call: it answers "what have I
+  registered", and only an administrator of that organisation may ask. You will get a
+  <code>403</code> for an organisation you do not administer — that is correct. A
+  consumer discovers another organisation's service through the <strong>catalogue</strong>,
+  which is filtered by what its owner chose to publish, never by reading their registry.
+</p>
+<button id="listData">List resources I administer</button>
+<button id="listSvc">Try the service tenant</button>
 <div id="resources"></div>
 
 <h2>Upload, download, process</h2>
@@ -193,6 +200,17 @@ async function node(path, init = {}) {
 
 async function listResources(tenant) {
   const res = await node(`/v1/t/${tenant}/resources`);
+  if (res.status === 403) {
+    document.getElementById("resources").innerHTML = "";
+    // Not a misconfiguration. Listing is the owner's view of their own registry, and
+    // an outsider holding an agreement may *use* a resource without being able to
+    // enumerate what else exists. Paste the id, or find it in the catalogue.
+    return out(
+      `403 — you do not administer "${tenant}", so you cannot list its resources.\n\n` +
+      `This is the node refusing correctly, not a setup problem. An agreement lets you\n` +
+      `use a resource; it never lets you enumerate an organisation's registry.\n\n` +
+      `Put the service's id in the field below — its owner, or the catalogue, provides it.`);
+  }
   if (!res.ok) return out(`${res.status} ${await res.text()}`);
   const rows = await res.json();
   document.getElementById("resources").innerHTML =

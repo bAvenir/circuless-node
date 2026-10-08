@@ -390,6 +390,47 @@ def test_a_redirect_is_rewritten_back_through_the_node(
     )
 
 
+def test_a_node_with_no_gateway_url_still_rewrites(
+    realm: FixtureRealm, tmp_path, upstream: Upstream, alpha_user: dict[str, str]
+) -> None:
+    """A node configured with neither a gateway URL nor an overlay address.
+
+    Every other test here sets `gateway_base_url`, which short-circuited the other half
+    of the `or` in `_invoke_base` — where a property was being called as a method. That
+    threw on every redirect and every `202`, and no test reached it. The first node
+    deployed without a gateway URL found it in about a minute.
+
+    The `Location` is relative, which is right rather than a fallback: it resolves
+    against whatever address the caller used to reach this node.
+    """
+    settings = Settings(  # type: ignore[call-arg]
+        node_id=realm.node_id,
+        issuer=realm.issuer,
+        database_url=f"sqlite:///{tmp_path / 'node.db'}",
+        data_dir=tmp_path / "data",
+        cors_allow_origins=["https://ui.circuless.eu"],
+    )
+    assert settings.gateway_base_url is None
+    assert settings.effective_overlay_base_url is None
+
+    built = create_public_app(settings)
+    built.state.engine = migrated_engine(settings)
+    built.state.upstream_transport = upstream.transport()
+    with Session(built.state.engine) as session:
+        session.add(Tenant(org_id=ALPHA_ORG, group_path="/orgs/alpha", slug="alpha"))
+        session.commit()
+    resource_id = make_service(built)
+
+    upstream.respond = lambda r: httpx.Response(
+        303, headers={"Location": "http://10.0.0.5:8080/api/jobs/7"}
+    )
+    with TestClient(built, raise_server_exceptions=False) as local:
+        response = local.get(url(resource_id), headers=alpha_user, follow_redirects=False)
+
+    assert response.status_code == 303, response.text
+    assert response.headers["location"] == (f"/v1/t/alpha/resources/{resource_id}/invoke/jobs/7")
+
+
 def test_a_redirect_elsewhere_is_refused(
     client: TestClient, app, upstream: Upstream, alpha_user: dict[str, str]
 ) -> None:

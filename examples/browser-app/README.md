@@ -52,7 +52,7 @@ longest-lived credential here.
 | | |
 |---|---|
 | the node's permitted browser origins | must include `http://127.0.0.1:5173`. Every call is cross-origin with a bearer token, and wildcards are refused. A CORS failure appears in the console as an opaque network error, not a 403 |
-| a dataset and a service resource | the ids go in the form; `List resources` finds them |
+| a dataset and a service resource | the ids go in the form. `List resources` finds the ones you administer; another organisation's service id has to be pasted, because listing is an owner's call and an agreement does not grant it |
 | an agreement | if the data and the service belong to different organisations |
 
 ## Verification

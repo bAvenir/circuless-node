@@ -470,5 +470,14 @@ def _invoke_base(settings: Settings, decided: _Decided) -> str:
     code, so the test agreed with the bug; the first request through a real server found
     it at once. `test_reference_service.py` follows it rather than comparing it.
     """
-    base = (settings.gateway_base_url or settings.effective_overlay_base_url() or "").rstrip("/")
+    # A property, not a method — every other caller treats it as one. Calling it threw
+    # `TypeError: 'NoneType' object is not callable`, which surfaced as a 500 on every
+    # redirect and every `202`. It survived because **every test set
+    # `gateway_base_url`**, so `or` short-circuited and this half never ran. The first
+    # node configured without a gateway URL hit it immediately.
+    base = (settings.gateway_base_url or settings.effective_overlay_base_url or "").rstrip("/")
+
+    # With neither configured this is a relative URL, which is correct rather than a
+    # fallback: a relative `Location` resolves against whatever address the caller used
+    # to reach this node, and that is the one address known to work for them.
     return f"{base}/v1/t/{decided.tenant_slug}/resources/{decided.resource.id}/invoke"
