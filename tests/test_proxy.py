@@ -381,9 +381,12 @@ def test_a_redirect_is_rewritten_back_through_the_node(
     response = client.post(url(resource_id), headers=alpha_user, follow_redirects=False)
 
     assert response.status_code == 303
+    # The tenant **slug**, not its id: `/v1/t/{tenant_slug}/...` is what the router
+    # matches. This assertion used to read `{tenant_id(app)}` and passed, because it was
+    # written from the same mistaken code it was checking — the rewritten URL was a 404.
+    # `test_reference_service.py` follows it for real, which is what found that.
     assert response.headers["location"] == (
-        f"https://alpha.nodes.circuless.eu/v1/t/{tenant_id(app)}/resources/"
-        f"{resource_id}/invoke/jobs/7?x=1"
+        f"https://alpha.nodes.circuless.eu/v1/t/alpha/resources/{resource_id}/invoke/jobs/7?x=1"
     )
 
 

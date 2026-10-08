@@ -153,10 +153,21 @@ def proxy_router() -> APIRouter:
 class _Decided:
     """What the authorisation step resolved, carried into the relay."""
 
-    __slots__ = ("tenant_id", "resource", "policy", "acting_org", "entry_id", "credential")
+    __slots__ = (
+        "tenant_id",
+        "tenant_slug",
+        "resource",
+        "policy",
+        "acting_org",
+        "entry_id",
+        "credential",
+    )
 
-    def __init__(self, tenant_id, resource, policy, acting_org, entry_id, credential):  # noqa: ANN001
+    def __init__(  # noqa: ANN001
+        self, tenant_id, tenant_slug, resource, policy, acting_org, entry_id, credential
+    ):
         self.tenant_id = tenant_id
+        self.tenant_slug = tenant_slug
         self.resource = resource
         self.policy = policy
         self.acting_org = acting_org
@@ -227,7 +238,9 @@ def _authorised(
                 credential = render(stored, unseal(fernet, stored.secret))
 
         session.expunge_all()
-        return _Decided(tenant.id, resource, policy, decision.acting_org, entry_id, credential)
+        return _Decided(
+            tenant.id, tenant.slug, resource, policy, decision.acting_org, entry_id, credential
+        )
 
 
 # --- building the upstream request ------------------------------------------------------
@@ -446,6 +459,16 @@ async def _read_body(request: Request, policy: InvokePolicy) -> bytes | None:
 
 
 def _invoke_base(settings: Settings, decided: _Decided) -> str:
-    """This node's own address for the resource being invoked, for `Location`."""
+    """This node's own address for the resource being invoked, for `Location`.
+
+    The tenant's **slug**, not its id. `/v1/t/{tenant_slug}/...` is what the router
+    matches and what `tenant_by_slug` looks up, so a URL built from the UUID is a 404 —
+    a rewritten `Location` the consumer cannot follow.
+
+    This was wrong until a test actually followed one. The unit test covering it
+    compared the rewritten string against an expectation written from the same mistaken
+    code, so the test agreed with the bug; the first request through a real server found
+    it at once. `test_reference_service.py` follows it rather than comparing it.
+    """
     base = (settings.gateway_base_url or settings.effective_overlay_base_url() or "").rstrip("/")
-    return f"{base}/v1/t/{decided.resource.tenant_id}/resources/{decided.resource.id}/invoke"
+    return f"{base}/v1/t/{decided.tenant_slug}/resources/{decided.resource.id}/invoke"

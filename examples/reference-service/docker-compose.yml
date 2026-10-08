@@ -1,0 +1,49 @@
+# The reference service, arranged the way a service should be.
+#
+# The important line in this file is the one that is **missing**: there is no `ports:`.
+#
+# The service is reachable from the node and from nothing else. That is not tidiness —
+# it is what makes `X-CIRCULess-Subject` and `X-CIRCULess-Org` mean anything. The node
+# strips any a consumer sent and injects its own, so those headers are the node's word
+# about who is calling. If the service is reachable by anything else, they are whatever
+# the sender typed, and `X-CIRCULess-Org: someone-else` is a one-line forgery.
+#
+# The key check in `service.py` is the second lock on the same door. Either alone is
+# an argument; together they are a boundary.
+#
+#   REFERENCE_SERVICE_KEY=$(openssl rand -hex 24) docker compose up -d
+#
+# Then give the node the same value:
+#
+#   PUT /v1/t/beta/resources/<id>/credential
+#   {"scheme": "header", "header_name": "X-API-Key", "secret": "<the same value>"}
+#
+# and register the resource with endpoint_url http://reference-service:8080 — a private
+# name on this network, which is exactly what the node's SSRF guard expects. Loopback
+# and link-local are refused; private addresses are the normal case (D20).
+name: circuless-reference-service
+
+networks:
+  # `internal: true` would also cut the service off from the internet, which a real
+  # service often needs. It is left routable and simply not published: nothing binds a
+  # host port, so nothing outside this network can open a socket to it.
+  service_net:
+    name: circuless_service_net
+
+services:
+  reference-service:
+    build: .
+    image: circuless/reference-service:dev
+    restart: unless-stopped
+    networks: [service_net]
+    environment:
+      # No default. A service that starts without its key and accepts everything is
+      # worse than one that refuses to start, so `service.py` fails closed on an empty
+      # value and this refuses to render without it.
+      REFERENCE_SERVICE_KEY: ${REFERENCE_SERVICE_KEY:?generate one and give the node the same value}
+      # `service` knows nothing about CIRCULess; `identity` adds the per-user layer.
+      SERVICE_MODULE: ${SERVICE_MODULE:-service}
+      REFERENCE_SERVICE_JOB_DELAY_S: ${REFERENCE_SERVICE_JOB_DELAY_S:-2}
+    read_only: true
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
