@@ -1,0 +1,83 @@
+# The whole scenario on one machine, for a manual walkthrough.
+#
+#   cd examples
+#   export CIRCULESS_NODE_ISSUER=https://auth.circuless.bavenir.eu/realms/circuless
+#   export REFERENCE_SERVICE_KEY=$(openssl rand -hex 24)
+#   docker compose -f docker-compose.demo.yml up -d --build
+#
+# **Not a deployment.** `../deploy/docker-compose.yml` is the real thing: there the node
+# shares a NetBird sidecar's network namespace and publishes nothing at all. This one
+# publishes the node on loopback so a browser can reach it, which is only acceptable
+# because it is a laptop.
+#
+# ## Why the node runs in a container here
+#
+# Because the node refuses a loopback upstream. A service on `127.0.0.1` would be
+# refused by `policy.check_upstream_url`, since a node's own internal interface lives
+# there and a provider who could register it would read `/metrics` and
+# `/internal/authz` from outside.
+#
+# Inside this network the service is `reference-service:8080`, a private address, which
+# the guard permits — that is the ordinary case for a partner's service (D20). Running
+# the node on the host instead would leave nowhere to put the service.
+name: circuless-demo
+
+networks:
+  demo:
+
+volumes:
+  node-data:
+
+services:
+  reference-service:
+    build: ./reference-service
+    image: circuless/reference-service:dev
+    restart: unless-stopped
+    networks: [demo]
+    environment:
+      REFERENCE_SERVICE_KEY: ${REFERENCE_SERVICE_KEY:?generate one; the node gets the same value}
+      # `service` knows nothing about CIRCULess; `identity` adds the per-user layer.
+      SERVICE_MODULE: ${SERVICE_MODULE:-service}
+      REFERENCE_SERVICE_JOB_DELAY_S: "2"
+    # No ports. Only the node talks to it.
+    read_only: true
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+
+  node-migrate:
+    build: ..
+    image: circuless/node:dev
+    restart: "no"
+    networks: [demo]
+    environment:
+      CIRCULESS_NODE_NODE_ID: ${CIRCULESS_NODE_ID:-bvr-cloud}
+    volumes: [node-data:/var/lib/circuless]
+    # `/app`, where alembic.ini and migrations/ live. The image's WORKDIR is the data
+    # directory, so without this alembic reports "No 'script_location' key found".
+    working_dir: /app
+    entrypoint: ["alembic", "upgrade", "head"]
+
+  node:
+    build: ..
+    image: circuless/node:dev
+    restart: unless-stopped
+    networks: [demo]
+    depends_on:
+      node-migrate:
+        condition: service_completed_successfully
+    environment:
+      # Must match an audience scope in the realm: node:bvr-cloud or node:alpha-onprem.
+      # The node accepts a token only when `aud` is exactly `node:<this value>`.
+      CIRCULESS_NODE_NODE_ID: ${CIRCULESS_NODE_ID:-bvr-cloud}
+      CIRCULESS_NODE_ISSUER: ${CIRCULESS_NODE_ISSUER:?e.g. https://auth.circuless.bavenir.eu/realms/circuless}
+      # Sync will fail until this node is registered with the Cloud, and that is fine:
+      # the node keeps serving from its cache through a control-plane outage (F16).
+      # Watch for it in the logs rather than being surprised by it.
+      CIRCULESS_NODE_CLOUD_API_URL: ${CIRCULESS_NODE_CLOUD_API_URL:-https://api.circuless.bavenir.eu}
+      # The browser app's origin. Every call from it is cross-origin with a bearer
+      # token, and the node refuses a wildcard.
+      CIRCULESS_NODE_CORS_ALLOW_ORIGINS: '["http://127.0.0.1:5173","http://localhost:5173"]'
+    volumes: [node-data:/var/lib/circuless]
+    # Loopback only. The browser is on this machine; nothing else should reach it.
+    ports: ["127.0.0.1:8000:8000"]
+    security_opt: [no-new-privileges:true]
