@@ -1,0 +1,268 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>CIRCULess browser app — example</title>
+<!--
+  A partner application, in one file. No framework, no build step.
+
+      python3 -m http.server 5173
+      open http://127.0.0.1:5173/
+
+  NOT the node's admin UI. This is an example of what a partner builds: it signs a
+  person in, works with data on a node, and calls a service through that node.
+
+  Port 5173 is not arbitrary — `circuless-ui` already registers
+  http://127.0.0.1:5173/* as a redirect URI and web origin, so this runs against the
+  realm as deployed, with no change to it.
+
+  The one thing worth reading closely is `signIn()` and `tokenFor()`. Everything else is
+  ordinary fetch calls.
+-->
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 15px/1.55 system-ui, sans-serif; max-width: 52rem; margin: 2rem auto; padding: 0 1rem; }
+  h1 { font-size: 1.3rem; } h2 { font-size: 1rem; margin-top: 2rem; }
+  fieldset { border: 1px solid #8884; border-radius: 6px; margin: 0 0 1rem; padding: .75rem 1rem; }
+  label { display: block; margin: .3rem 0; }
+  label span { display: inline-block; min-width: 11rem; opacity: .75; }
+  input[type=text] { width: 26rem; max-width: 100%; font: inherit; padding: .2rem .4rem; }
+  button { font: inherit; padding: .35rem .8rem; margin-right: .4rem; }
+  table { border-collapse: collapse; width: 100%; margin: .5rem 0; }
+  th, td { text-align: left; padding: .25rem .5rem; border-bottom: 1px solid #8883; font-size: .9rem; }
+  code, pre { font-family: ui-monospace, monospace; font-size: .85rem; }
+  pre { background: #8881; padding: .6rem; border-radius: 4px; overflow-x: auto; }
+  .note { opacity: .75; font-size: .88rem; }
+  .bad { color: #c0392b; } .good { color: #1e8449; }
+</style>
+
+<h1>CIRCULess browser app — example</h1>
+<p class="note">
+  Signs in, lists a tenant's resources, uploads and downloads a CSV, and has a service
+  on the node extract its column names. The interesting part is how it gets its tokens.
+</p>
+
+<fieldset>
+  <legend>Configuration</legend>
+  <label><span>Identity provider</span><input type="text" id="issuer"></label>
+  <label><span>Client id</span><input type="text" id="clientId" value="circuless-ui"></label>
+  <label><span>Node base URL</span><input type="text" id="nodeUrl"></label>
+  <label><span>Node audience</span><input type="text" id="nodeAud" placeholder="node:bvr-cloud"></label>
+  <label><span>Data tenant</span><input type="text" id="dataTenant" value="alpha"></label>
+  <label><span>Service tenant</span><input type="text" id="svcTenant" value="beta"></label>
+  <button id="signin">Sign in</button>
+  <button id="signout">Forget tokens</button>
+</fieldset>
+
+<h2>Tokens</h2>
+<div id="tokens"><p class="note">Not signed in.</p></div>
+
+<h2>Resources</h2>
+<button id="listData">List data resources</button>
+<button id="listSvc">List service resources</button>
+<div id="resources"></div>
+
+<h2>Upload, download, process</h2>
+<label><span>Dataset resource id</span><input type="text" id="datasetId"></label>
+<label><span>Service resource id</span><input type="text" id="serviceId"></label>
+<label><span>CSV file</span><input type="file" id="file" accept=".csv,text/csv"></label>
+<button id="upload">Upload to the node</button>
+<button id="roundTrip">Download, then extract headers</button>
+<pre id="out">—</pre>
+
+<script>
+"use strict";
+
+// --- configuration, remembered across the sign-in redirect ---------------------------
+const FIELDS = ["issuer", "clientId", "nodeUrl", "nodeAud", "dataTenant", "svcTenant",
+                "datasetId", "serviceId"];
+const cfg = () => Object.fromEntries(FIELDS.map(f => [f, document.getElementById(f).value.trim()]));
+FIELDS.forEach(f => {
+  const saved = sessionStorage.getItem("cfg." + f);
+  if (saved) document.getElementById(f).value = saved;
+  document.getElementById(f).addEventListener("change", e =>
+    sessionStorage.setItem("cfg." + f, e.target.value));
+});
+
+// Tokens live in memory, keyed by audience. Deliberately not in localStorage: the
+// refresh token is the longest-lived credential here, and anything in storage outlives
+// the tab and is readable by any script that ends up on this origin.
+let refreshToken = null;
+const access = new Map();   // audience -> { token, exp }
+
+const out = (x) => document.getElementById("out").textContent =
+  typeof x === "string" ? x : JSON.stringify(x, null, 2);
+
+function claims(jwt) {
+  const part = jwt.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
+  return JSON.parse(atob(part + "=".repeat((4 - part.length % 4) % 4)));
+}
+
+// --- PKCE ----------------------------------------------------------------------------
+const random = (n) => Array.from(crypto.getRandomValues(new Uint8Array(n)))
+  .map(b => "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"[b % 64]).join("");
+
+async function challengeFor(verifier) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
+  return btoa(String.fromCharCode(...new Uint8Array(digest)))
+    .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+/**
+ * Sign in once, asking for EVERY audience this app will ever need.
+ *
+ * A refresh request can only narrow to scopes granted at sign-in — it cannot add one.
+ * So anything that might be needed later has to be requested here, or the user signs in
+ * again.
+ */
+async function signIn() {
+  const c = cfg();
+  const verifier = random(64);
+  sessionStorage.setItem("pkce", verifier);
+  const scope = ["openid", "circuless-cloud", c.nodeAud].filter(Boolean).join(" ");
+  const query = new URLSearchParams({
+    client_id: c.clientId, response_type: "code",
+    redirect_uri: location.origin + location.pathname,
+    scope, state: random(16),
+    code_challenge: await challengeFor(verifier), code_challenge_method: "S256",
+  });
+  location.assign(`${c.issuer}/protocol/openid-connect/auth?${query}`);
+}
+
+/** Exchange the code. Keeps the refresh token and throws the access token away. */
+async function completeSignIn(code) {
+  const c = cfg();
+  const verifier = sessionStorage.getItem("pkce");
+  sessionStorage.removeItem("pkce");
+  history.replaceState({}, "", location.pathname);
+
+  const body = new URLSearchParams({
+    grant_type: "authorization_code", client_id: c.clientId, code,
+    redirect_uri: location.origin + location.pathname, code_verifier: verifier,
+  });
+  const res = await fetch(`${c.issuer}/protocol/openid-connect/token`, { method: "POST", body });
+  if (!res.ok) throw new Error(`token endpoint: ${res.status} ${await res.text()}`);
+  const granted = await res.json();
+  refreshToken = granted.refresh_token;
+
+  // The access token from sign-in carries EVERY audience that was requested, and every
+  // API rejects a token carrying more than one — a token two systems accept is
+  // replayable between them. So it is useful for exactly nothing and is discarded here.
+  // Shown on the page only because the mistake of using it is so easy to make.
+  window.__discarded = claims(granted.access_token).aud;
+  render();
+}
+
+/**
+ * One access token per audience, minted on demand by narrowing the refresh grant.
+ *
+ * This is the whole mechanism. One sign-in, then a token per API, each with exactly one
+ * audience.
+ */
+async function tokenFor(audience) {
+  const held = access.get(audience);
+  if (held && held.exp - Date.now() / 1000 > 30) return held.token;
+  if (!refreshToken) throw new Error("not signed in");
+
+  const c = cfg();
+  const body = new URLSearchParams({
+    grant_type: "refresh_token", client_id: c.clientId,
+    refresh_token: refreshToken, scope: `openid ${audience}`,
+  });
+  const res = await fetch(`${c.issuer}/protocol/openid-connect/token`, { method: "POST", body });
+  if (!res.ok) throw new Error(`refresh for ${audience}: ${res.status} ${await res.text()}`);
+  const granted = await res.json();
+  // Keycloak rotates the refresh token; keep the new one or the next narrow fails.
+  if (granted.refresh_token) refreshToken = granted.refresh_token;
+  const parsed = claims(granted.access_token);
+  access.set(audience, { token: granted.access_token, exp: parsed.exp });
+  render();
+  return granted.access_token;
+}
+
+// --- the node ---------------------------------------------------------------------------
+// Every one of these is a cross-origin request carrying a bearer token, so the node's
+// operator must have added this page's origin to that node's permitted-origins list.
+// A CORS failure here shows in the console as an opaque network error, not a 403.
+async function node(path, init = {}) {
+  const c = cfg();
+  const token = await tokenFor(c.nodeAud);
+  const res = await fetch(c.nodeUrl.replace(/\/$/, "") + path, {
+    ...init, headers: { ...(init.headers || {}), Authorization: `Bearer ${token}` },
+  });
+  return res;
+}
+
+async function listResources(tenant) {
+  const res = await node(`/v1/t/${tenant}/resources`);
+  if (!res.ok) return out(`${res.status} ${await res.text()}`);
+  const rows = await res.json();
+  document.getElementById("resources").innerHTML =
+    "<table><tr><th>slug</th><th>kind</th><th>id</th></tr>" +
+    rows.map(r => `<tr><td>${r.slug}</td><td>${r.kind}</td><td><code>${r.id}</code></td></tr>`).join("") +
+    "</table>";
+  out(`${rows.length} resource(s) in ${tenant}`);
+}
+
+async function upload() {
+  const c = cfg();
+  const file = document.getElementById("file").files[0];
+  if (!file) return out("choose a CSV first");
+  const res = await node(`/v1/t/${c.dataTenant}/resources/${c.datasetId}/data`,
+    { method: "PUT", body: file, headers: { "Content-Type": "text/csv" } });
+  out(`${res.status} ${await res.text()}`);
+}
+
+/**
+ * The scenario: download from the node, then send the bytes to the service.
+ *
+ * Two separate calls, each authorised and logged on its own. The service never fetches
+ * from the node — it holds no credentials for it, and a service reading on its own
+ * authority rather than the caller's is how an agreement stops being the thing that
+ * decides.
+ */
+async function roundTrip() {
+  const c = cfg();
+  const got = await node(`/v1/t/${c.dataTenant}/resources/${c.datasetId}/data`);
+  if (!got.ok) return out(`download: ${got.status} ${await got.text()}`);
+  const bytes = await got.blob();
+
+  const processed = await node(
+    `/v1/t/${c.svcTenant}/resources/${c.serviceId}/invoke/headers`,
+    { method: "POST", body: bytes, headers: { "Content-Type": "text/csv" } });
+  out({ downloaded_bytes: bytes.size, status: processed.status,
+        response: await processed.json().catch(() => processed.text()) });
+}
+
+// --- what is on screen ----------------------------------------------------------------------
+function render() {
+  const el = document.getElementById("tokens");
+  if (!refreshToken) { el.innerHTML = '<p class="note">Not signed in.</p>'; return; }
+  const rows = [...access.entries()].map(([aud, t]) => {
+    const c = claims(t.token);
+    return `<tr><td><code>${aud}</code></td><td><code>${JSON.stringify(c.aud)}</code></td>
+            <td>${Math.max(0, Math.round(c.exp - Date.now() / 1000))}s</td>
+            <td><code>${(c.sub || "").slice(0, 8)}…</code></td></tr>`;
+  }).join("");
+  el.innerHTML =
+    `<p class="note">Signed in. One access token per audience, minted from one refresh token.</p>` +
+    (rows ? `<table><tr><th>requested</th><th>aud in token</th><th>expires</th><th>sub</th></tr>${rows}</table>`
+          : '<p class="note">No access token yet — one is fetched on the first call.</p>') +
+    (window.__discarded
+      ? `<p class="note bad">Discarded the token from sign-in: <code>aud = ${JSON.stringify(window.__discarded)}</code>
+         — it carries every audience requested, so every API rejects it.</p>`
+      : "");
+}
+
+document.getElementById("signin").onclick = () => signIn().catch(e => out(String(e)));
+document.getElementById("signout").onclick = () => {
+  refreshToken = null; access.clear(); delete window.__discarded; render(); out("—");
+};
+document.getElementById("listData").onclick = () =>
+  listResources(cfg().dataTenant).catch(e => out(String(e)));
+document.getElementById("listSvc").onclick = () =>
+  listResources(cfg().svcTenant).catch(e => out(String(e)));
+document.getElementById("upload").onclick = () => upload().catch(e => out(String(e)));
+document.getElementById("roundTrip").onclick = () => roundTrip().catch(e => out(String(e)));
+
+const code = new URLSearchParams(location.search).get("code");
+if (code) completeSignIn(code).catch(e => out(String(e)));
+</script>
