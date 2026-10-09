@@ -21,7 +21,7 @@ If code and design disagree, stop and ask. Do not quietly change either one.
 
 ## Stack
 
-Python 3.12 · **uv** (commit `uv.lock`) · FastAPI + Uvicorn · SQLModel/SQLAlchemy on **SQLite (WAL)**, Postgres via `DATABASE_URL` · **Alembic from the first model** · `pyjwt[crypto]` + `httpx` · `private_key_jwt` (authlib or hand-rolled) · `fsspec`, file storage only in the beta · `cryptography` (Fernet) · Jinja + htmx for the admin UI, no JS build step.
+Python 3.12 · **uv** (commit `uv.lock`) · FastAPI + Uvicorn · SQLModel/SQLAlchemy on **SQLite (WAL)**, Postgres via `DATABASE_URL` · **Alembic from the first model** · `pyjwt[crypto]` + `httpx` · `private_key_jwt` (authlib or hand-rolled) · `fsspec`, file storage only in the beta · `cryptography` (Fernet) · static files plus PKCE in the browser for the admin UI, no JS build step.
 
 Distributed as `uvx circuless-node==<version>`, always pinned, and as a non-root container image pinned by digest.
 
@@ -33,7 +33,9 @@ Each one has a test. A change that weakens one needs J's explicit approval.
    - `/.well-known/circuless-node` — requires a platform token;
    - `/healthz` — overlay or internal interface only, status code, no body;
    - `/metrics` and `POST /internal/authz` — internal or overlay interface only.
-2. **No anonymous routes** (D21). Every route requires a valid token. A CI test lists every FastAPI route and asserts that a request without a token gets 401. New routes are covered automatically — never exempt one.
+2. **No anonymous routes** (D21), with exactly one exemption. Every route requires a valid token. A CI test lists everything the app serves — API routes *and* mounted static trees — and asserts that a request without a token gets 401. New routes are covered automatically.
+   - The exemption is `/ui/*`, the admin UI's static files, recorded in `app.ANONYMOUS_PREFIXES` and asserted there. A browser cannot present a token for the request that fetches the code which obtains the token. Nothing data-bearing is ever served from that tree.
+   - **Never add a second.** That is a change to D21 and needs J's approval; the assertion fails until it is edited.
 3. **Token checks, in this order** (N2):
    - signature against the cached JWKS — on an unknown `kid`, refetch **once**, rate-limited;
    - `iss`;

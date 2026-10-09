@@ -19,8 +19,11 @@ public app mounts one router, which carries the prefix — and asserted by a tes
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from . import __version__
 from .access_log import REQUEST_ID_HEADER, install_request_id
@@ -48,6 +51,29 @@ API_PREFIX = "/v1"
 #: convention, and versioning it would mean nobody could. It still requires a token —
 #: D21 has no anonymous routes, and this one least of all (see `well_known`).
 UNVERSIONED_PATHS = {"/.well-known/circuless-node"}
+
+#: The admin UI's static files, vendored into the package so a node on a partner's
+#: premises renders with no outbound request of any kind (design.md).
+UI_DIRECTORY = Path(__file__).parent / "ui"
+
+#: The one exemption to D21, and the only place it is written down. Asserted, like
+#: `UNVERSIONED_PATHS`, so a second entry fails a test before it reaches a review.
+#:
+#: **Why one is needed.** A browser cannot present a token for its own first request:
+#: the code that performs the PKCE exchange is itself a file it has to fetch. Something
+#: has to be anonymous, and the choice is where to put it.
+#:
+#: **Why this is safe, and what makes it stay safe.** Everything under `/ui` is static
+#: and ships inside the wheel — markup, CSS, the logo. It carries no tenant data, reads
+#: no database, and is identical on every node, so serving it to an unauthenticated
+#: caller discloses only that this node has an admin interface. The API is untouched:
+#: every `/v1` route still refuses an anonymous request, which is what the UI's own
+#: tokens are for.
+#:
+#: **The rule that comes with it:** nothing data-bearing is ever served from this tree.
+#: Not a bootstrapped tenant list, not a config file with an issuer in it, not an error
+#: page naming a resource. The moment that is wanted, it is an API route behind a token.
+ANONYMOUS_PREFIXES = ("/ui",)
 
 
 def _attach_resources(app: FastAPI, settings: Settings) -> None:
@@ -111,6 +137,15 @@ def create_public_app(settings: Settings | None = None) -> FastAPI:
         return node_document(app.state.settings)
 
     app.include_router(v1_router())
+
+    # Mounted unconditionally. Guarding this on the directory existing would make the
+    # route-auth gate's coverage depend on a packaging accident — present in the repo,
+    # absent in a wheel built wrong — and the gate would go quiet rather than fail.
+    app.mount(
+        ANONYMOUS_PREFIXES[0],
+        StaticFiles(directory=UI_DIRECTORY, html=True),
+        name="ui",
+    )
     return app
 
 

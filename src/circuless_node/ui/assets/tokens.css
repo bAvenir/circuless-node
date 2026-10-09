@@ -1,0 +1,164 @@
+/* CIRCULess design tokens.
+ *
+ * Every colour, size and radius a CIRCULess interface uses. Nothing else should declare
+ * a literal colour: a hex in a stylesheet is a value that will not change when the brand
+ * does, and will not flip when the mode does.
+ *
+ * Two modes from one palette. The brand's greens do not have fixed jobs — they swap
+ * roles. `forest` is ink on light and a fill on dark, because it reads at 6.7:1 on paper
+ * and 2.8:1 on the dark ground. The tokens below are named for their *job*, so a rule
+ * written against them is correct in both modes without being written twice.
+ *
+ * Source of the light palette: assets/Circuless_Colors.pdf, "WEBSITE COLORS".
+ * See ../design.md for how to use these, and for what is deliberately absent.
+ */
+
+:root {
+  /* ---- brand, as delivered. Never alter these five. -------------------------------- */
+  --cl-leaf:        #8ebb61;  /* the primary brand green */
+  --cl-forest:      #4d5e3c;  /* the dark brand green */
+  --cl-pale:        #eef2a6;
+  --cl-sage:        #caddb9;
+  --cl-sage-light:  #dae8ce;
+  --cl-mist:        #ecf4e5;
+  --cl-paper:       #f7faf4;
+
+  /* ---- semantic colours. NOT from the brand pack — see design.md §5. ---------------- */
+  --cl-danger:      #883418;  /* 7.8:1 on paper */
+  --cl-warning:     #8a5a12;  /* 5.6:1 — a darkened amber; the brand's own is too light */
+  --cl-success:     #2e6b3f;  /* 6.1:1 */
+  --cl-info:        #1f5c7a;  /* 7.0:1 */
+
+  /* ---- type. System stacks: no webfont, no third-party request, no offline failure. - */
+  --cl-font-body: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial,
+                  sans-serif;
+  --cl-font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+                  "Liberation Mono", monospace;
+
+  /* A scale, unlike the source it came from. 16px base: this is an interface with
+   * tables and forms that people read for an hour, not a chat window. */
+  --cl-text-xs:   0.75rem;   /* 12px — tags, table captions */
+  --cl-text-sm:   0.875rem;  /* 14px — secondary text, dense table cells */
+  --cl-text-base: 1rem;      /* 16px — body */
+  --cl-text-lg:   1.125rem;  /* 18px — section headings */
+  --cl-text-xl:   1.375rem;  /* 22px — page title */
+  --cl-leading:   1.55;
+  --cl-leading-tight: 1.3;
+
+  /* ---- spacing. A real scale, on a 4px grid. --------------------------------------- */
+  --cl-space-1: 0.25rem;  --cl-space-2: 0.5rem;   --cl-space-3: 0.75rem;
+  --cl-space-4: 1rem;     --cl-space-5: 1.5rem;   --cl-space-6: 2rem;
+  --cl-space-7: 3rem;
+
+  /* ---- shape ------------------------------------------------------------------------ */
+  --cl-radius-sm:   4px;
+  --cl-radius:      8px;
+  --cl-radius-pill: 999px;
+  --cl-border-width: 1px;
+
+  /* ---- motion ----------------------------------------------------------------------- */
+  --cl-transition: 150ms ease;
+}
+
+/* ---- light: the default, and what the brand pack describes --------------------------- */
+:root,
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --cl-bg:           var(--cl-paper);
+  --cl-bg-raised:    #ffffff;      /* cards, panels, table rows */
+  --cl-bg-sunken:    var(--cl-mist);
+  --cl-bg-hover:     var(--cl-sage-light);
+  --cl-bg-selected:  var(--cl-mist);
+
+  --cl-ink:          #15200f;      /* 16:1 — body text */
+  --cl-ink-muted:    var(--cl-forest);  /* 6.7:1 — secondary text, still readable */
+  --cl-ink-faint:    #5f7050;      /* 5.1:1 — the floor. Nothing lighter carries text */
+  --cl-ink-inverse:  #ffffff;
+
+  --cl-line:         #cfdcc2;      /* hairlines */
+  --cl-line-strong:  var(--cl-sage);
+
+  /* `leaf` is 2.1:1 on paper and 3.2:1 under forest text — it cannot label anything.
+   * The primary action is therefore a forest fill with white text (7.0:1), and leaf is
+   * reserved for accents that carry no words. */
+  --cl-accent:         var(--cl-leaf);
+  --cl-action-bg:      var(--cl-forest);
+  --cl-action-ink:     #ffffff;
+  --cl-action-bg-hover: #3d4b30;
+  --cl-focus:          var(--cl-forest);
+}
+
+/* ---- dark: derived here, not in the brand pack ---------------------------------------- */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --cl-bg:           #0d140a;
+  --cl-bg-raised:    #162112;
+  --cl-bg-sunken:    #090f07;
+  --cl-bg-hover:     #1e2c18;
+  --cl-bg-selected:  #22321b;
+
+  --cl-ink:          var(--cl-mist);        /* 17:1 */
+  --cl-ink-muted:    var(--cl-sage);        /* 13:1 */
+  --cl-ink-faint:    #8fa383;               /* 7:1 — still a readable floor */
+  --cl-ink-inverse:  #0d140a;
+
+  --cl-line:         #2a3a22;
+  --cl-line-strong:  #3d5131;
+
+  /* Roles swap. `forest` is only 2.8:1 on this ground, so it becomes a fill and `leaf`
+   * (8.8:1) becomes the thing you can read. */
+  --cl-accent:          var(--cl-leaf);
+  --cl-action-bg:       var(--cl-leaf);
+  --cl-action-ink:      #0d140a;            /* dark text on the leaf fill */
+  --cl-action-bg-hover: #a2cb78;
+  --cl-focus:           var(--cl-leaf);
+
+  /* Semantics lightened for the dark ground; the light-mode values are too dark here. */
+  --cl-danger:   #e08a66;
+  --cl-warning:  #d9a654;
+  --cl-success:  #7dc795;
+  --cl-info:     #7ab8d6;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --cl-bg: #0d140a;            --cl-bg-raised: #162112;
+    --cl-bg-sunken: #090f07;     --cl-bg-hover: #1e2c18;
+    --cl-bg-selected: #22321b;
+    --cl-ink: var(--cl-mist);    --cl-ink-muted: var(--cl-sage);
+    --cl-ink-faint: #8fa383;     --cl-ink-inverse: #0d140a;
+    --cl-line: #2a3a22;          --cl-line-strong: #3d5131;
+    --cl-accent: var(--cl-leaf); --cl-action-bg: var(--cl-leaf);
+    --cl-action-ink: #0d140a;    --cl-action-bg-hover: #a2cb78;
+    --cl-focus: var(--cl-leaf);
+    --cl-danger: #e08a66;        --cl-warning: #d9a654;
+    --cl-success: #7dc795;       --cl-info: #7ab8d6;
+  }
+}
+
+/* ---- the floor every CIRCULess page starts from ---------------------------------------- */
+html { color-scheme: light dark; }
+
+body {
+  margin: 0;
+  background: var(--cl-bg);
+  color: var(--cl-ink);
+  font-family: var(--cl-font-body);
+  font-size: var(--cl-text-base);
+  line-height: var(--cl-leading);
+}
+
+/* Visible focus on everything, always. The system this palette came from had none, and
+ * an interface people drive from the keyboard needs it more than most. */
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--cl-focus);
+  outline-offset: 2px;
+  border-radius: var(--cl-radius-sm);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition-duration: 1ms !important; animation-duration: 1ms !important; }
+}

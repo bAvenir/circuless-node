@@ -12,7 +12,9 @@ import pytest
 from starlette.testclient import TestClient
 
 from circuless_node.app import (
+    ANONYMOUS_PREFIXES,
     API_PREFIX,
+    UI_DIRECTORY,
     UNVERSIONED_PATHS,
     create_internal_app,
     create_public_app,
@@ -118,6 +120,37 @@ def test_the_unversioned_exemption_is_what_we_think_it_is(settings: Settings) ->
     """
     assert {"/.well-known/circuless-node"} == UNVERSIONED_PATHS
     assert route_paths(create_public_app(settings)) >= UNVERSIONED_PATHS
+
+
+def test_the_anonymous_exemption_is_what_we_think_it_is() -> None:
+    """The same guard for D21 that the one above gives invariant 1.
+
+    `ANONYMOUS_PREFIXES` is the only way a request reaches anything on this app without
+    a token. One entry, written down in one place, so that a second one fails here
+    before it reaches a review.
+    """
+    assert ANONYMOUS_PREFIXES == ("/ui",)
+
+
+def test_the_ui_is_not_an_api_route(settings: Settings) -> None:
+    """The two exemptions are separate and must stay separate.
+
+    `/ui` sits outside `/v1`, so the obvious way to silence invariant 1 would be to add
+    it to `UNVERSIONED_PATHS` — which would be wrong twice over: it is not an API route,
+    and that set is the record of which *API* paths escape the prefix. It does not
+    appear in `route_table` at all, and this pins that reading.
+    """
+    assert "/ui" not in UNVERSIONED_PATHS
+    assert not [path for path in route_paths(create_public_app(settings)) if path.startswith("/ui")]
+
+
+def test_the_ui_ships_inside_the_package() -> None:
+    """Vendored, not linked (design.md), and inside `src/circuless_node` so the wheel
+    carries it. A node on a partner's premises must render with no outbound request, and
+    a UI that is only in the repository renders as a 404 once installed."""
+    assert (UI_DIRECTORY / "index.html").is_file()
+    assert (UI_DIRECTORY / "assets" / "tokens.css").is_file()
+    assert UI_DIRECTORY.parent.name == "circuless_node"
 
 
 def test_the_overlay_stack_publishes_no_host_port() -> None:
