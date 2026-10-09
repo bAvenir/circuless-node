@@ -581,20 +581,30 @@ def authorised_tenant(
     return Authorised(tenant, entry_id)
 
 
-def tenant_org(tenant: Tenant) -> str:
-    """The slug of the organisation that owns this tenant.
+def owning_org(tenant: Tenant) -> str | None:
+    """The slug of the organisation that owns this tenant, or `None` if unresolvable.
 
     Parsed from `group_path` with the same function that reads a token's groups, so the
     string compared against `subject.admin_of` is produced by one reading of what a group
     path means rather than two.
+
+    A row whose `group_path` is not a depth-one `/orgs/<x>` cannot be owned by anyone a
+    token could name, so nobody can manage it. Whether that is fatal depends on what is
+    being asked: `tenant_org` below raises, because a request addressed to that one
+    tenant cannot be answered; `GET /v1/tenants` skips it, because the other tenants on
+    the node can be.
     """
     orgs, _admins = organisations_from_groups([tenant.group_path])
-    if not orgs:
-        # A tenant row whose group_path is not a depth-one /orgs/<x> cannot be owned by
-        # anyone a token could name, so nobody can manage it. Loud, because it is a
-        # provisioning bug and not something a caller can cause.
+    return next(iter(orgs)) if orgs else None
+
+
+def tenant_org(tenant: Tenant) -> str:
+    """The owning organisation of a tenant a request named, which must resolve."""
+    org = owning_org(tenant)
+    if org is None:
+        # Loud, because it is a provisioning bug and not something a caller can cause.
         raise NodeError(500, Reason.INTERNAL_ERROR, "tenant has no resolvable owning organisation")
-    return next(iter(orgs))
+    return org
 
 
 def _resource_or_404(session: Session, resource_id: uuid.UUID) -> Resource:

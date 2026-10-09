@@ -34,6 +34,7 @@ from .settings import Settings, get_settings
 from .storage import Storage
 from .subject import Subject, resolve_acting_org
 from .sync import SyncState, metrics_text
+from .tenants import tenant_router
 from .transfer import transfer_router
 from .upload import upload_router
 from .well_known import node_document
@@ -155,6 +156,7 @@ def v1_router() -> APIRouter:
 
         return body
 
+    router.include_router(tenant_router())
     router.include_router(resource_router())
     router.include_router(transfer_router())
     router.include_router(upload_router())
