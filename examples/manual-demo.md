@@ -1,6 +1,7 @@
 # Running the scenario by hand
 
-A complete exchange between two organisations, on one machine, in about fifteen minutes.
+A complete exchange between two organisations, on one machine, in about twenty-five
+minutes — then the node's own admin UI over the top of it.
 
 **Alpha owns the data. Beta owns the service. An Alpha user does the work.**
 
@@ -22,8 +23,11 @@ runs the node beside a NetBird sidecar whose network namespace it shares, and pu
 no host port at all. This file publishes the node on loopback so a browser can reach it,
 which is acceptable on a laptop and nowhere else.
 
-The browser app is **not the node's admin UI** (N13). It is an example of what a partner
-builds.
+**Two browser interfaces appear here, and they are not the same thing.** `browser-app/`
+is an example of what a *partner* builds: their own application, their own identity, using
+the node as a data plane. The node's **admin UI** (N13, §10) is the operator's own view of
+one node, shipped inside the node's wheel and served from the node itself. The first is a
+pattern to copy; the second is a part of the product.
 
 ## Why the node runs in a container
 
@@ -42,7 +46,7 @@ Docker, Python 3, and Keycloak admin credentials for the deployed realm.
 
 ---
 
-## 1. Two users
+## 1. Three users
 
 ```sh
 cd ../../circuless-cloud
@@ -52,12 +56,31 @@ KC=https://auth.circuless.bavenir.eu
 
 deploy/keycloak/scripts/kc.py dev-user --url $KC --username alpha.admin --org alpha --admin
 deploy/keycloak/scripts/kc.py dev-user --url $KC --username beta.admin  --org beta  --admin
+
+# For §10 only: a member of Alpha who is not an admin of it.
+deploy/keycloak/scripts/kc.py dev-user --url $KC --username alpha.user --org alpha
 ```
 
-Both get the password `Dev-Pa55word!` unless you pass `--user-password`.
+All get the password `Dev-Pa55word!` unless you pass `--user-password`.
 
-**Two users, not one.** A person in both organisations would invoke Beta's service on
-membership, and no agreement would be exercised at all.
+**Separate users, not one.** A person in both organisations would invoke Beta's service on
+membership, and no agreement would be exercised at all. `alpha.user` exists for a different
+reason: being *in* an organisation and being able to *manage* it are different rights (N18),
+and §10 is where that difference becomes visible.
+
+### If you intend to do §10, do this now
+
+The admin UI is served from the node's own origin, and the realm's `circuless-ui` client
+does not yet allow it — sign-in will fail at the redirect with nothing useful to read.
+`kc.py` **replaces** these lists rather than adding to them, so the browser app's values
+have to be repeated or §9 breaks:
+
+```sh
+export CIRCULESS_UI_REDIRECT_URIS="http://localhost:5173/*,http://127.0.0.1:5173/*,http://127.0.0.1:8000/ui/*"
+export CIRCULESS_UI_WEB_ORIGINS="http://localhost:5173,http://127.0.0.1:5173,http://127.0.0.1:8000"
+
+deploy/keycloak/scripts/kc.py apply --url $KC
+```
 
 ## 2. Start the node and the service
 
@@ -233,7 +256,125 @@ Watch the token panel. It shows one access token per audience, minted from a sin
 refresh token — and, in red, the `aud` of the token it threw away from sign-in: the one
 carrying every audience requested, which every API rejects.
 
-## 10. The audit trail
+## 10. The node's own admin UI
+
+Everything so far was `curl` and a partner's application. This is the operator's view —
+N13, served by the node itself at `/ui`, from files inside its wheel. Nothing is fetched
+from the internet to render it, which is the requirement for a node on a partner's
+premises.
+
+Open **http://127.0.0.1:8000/ui/** and sign in as **alpha.admin**.
+
+No token to paste and no fields to fill in: the page reads `config.json`, which the node
+writes at startup from its own settings, and does the PKCE exchange itself.
+
+**`/ui` is the one anonymous path on a node** — the single exemption to D21, because a
+browser cannot present a token for the request that fetches the code which obtains the
+token. Nothing under it carries tenant data or node state; `config.json` holds four keys,
+and a fifth fails a test and the node's own startup check.
+
+### What to look at
+
+Work down this list; each item is behaviour that no test in the suite can reach.
+
+**Signing in.** After the redirect, the address bar should hold no `?code=`. Reload: you
+stay signed in rather than bouncing back to the sign-in screen.
+
+**Membership against management.** The tenant list shows `alpha` with a green
+*Can manage* pill, and the slug is a link. Now open a private window and sign in as
+**alpha.user**: same tenant, *Member, cannot manage*, and the slug is deliberately **not**
+a link. Listing resources is a management call, so the link would lead to a 403 — saying
+so is better than handing someone a dead click. This distinction is the reason
+`GET /v1/tenants` returns `can_manage` at all.
+
+Back in the admin's window:
+
+**The resources you already made.** `batch-7` from §6 is there. Open it: a dataset's
+detail view, with its storage path and its two-stage deletion state (empty, for now).
+
+Beta's service is the more interesting one, and you will see it as **beta.admin** further
+down: a service's detail view carries `endpoint_url`, which is shown to whoever may manage
+the resource and to nobody else. It never reaches the catalogue — a consumer who knew the
+upstream address could go round the node, past `decide()`, past the agreement check and
+past the log.
+
+**Registering.** *Register a resource* → switch Kind between `dataset` and `service` a
+couple of times. The fields swap — `storage_path` for a dataset, `endpoint_url` and
+`invoke_policy` for a service — and **what you have already typed survives the swap**.
+The form offers only the fields the node accepts for that kind; it does not re-implement
+the node's rules about *values*.
+
+Look at Classification: `sensitive` is greyed out, reading *this node does not hold
+sensitive data*. That comes from `capabilities.accepts_sensitive` on
+`/.well-known/circuless-node`, not from anything baked into the page — a BVR-operated node
+refuses it (D22) and an on-premises one would not.
+
+**A refusal that must not lose your work.** Set Discoverability to `catalogue` and leave
+Licence as *None*. The node answers `licence_required` (NFR9), and the message appears
+**above the form with every field still filled in**. A long form that empties itself on a
+422 is the thing this avoids.
+
+Give it a licence and register it as a `file` dataset called `ui-scratch`.
+
+**Uploading.** On `ui-scratch`, choose a file big enough to watch — a hundred megabytes or
+more — and upload it. The progress bar should move, then the line reads
+`Stored N bytes at …`. Upload is the one call that does not use `fetch`: it needs XHR to
+report progress at all, and the node's default limit is a gibibyte.
+
+**Withdrawing.** *Withdraw* on `ui-scratch` — not on `batch-7`, which later sections use.
+
+Read the confirmation before clicking through it. It says consumers lose access
+immediately and the data is kept until the purge date; it does **not** say "delete",
+because the bytes are still there and will be until the purge job runs (N20, D25). The
+button stays disabled until you type `ui-scratch` exactly — the point is to make someone
+read *which* resource this is while a list of similar names is one click away.
+
+Afterwards the detail page carries the withdrawn notice and its purge date, and both the
+upload panel and the Withdraw button are gone.
+
+**The credential.** Open Beta's service in a second private window as **beta.admin** and
+go to *Credential*. It reports a `header` credential set on `X-API-Key` from §5 and
+**never shows the value** — no API and no interface returns it (invariant 11).
+
+> **§11 depends on this credential.** Submitting the form replaces it and *Remove* deletes
+> it, and either way the invoke in §11 comes back as `bad or missing X-API-Key` — the
+> service's own words, passed through, which reads like a node fault and is not one.
+> Follow the next paragraph exactly, or look without touching.
+
+Change the scheme and watch the username and header-name rows appear and disappear:
+`basic` needs a username, `header` needs a header name, `bearer` needs neither. Then set
+it back to `header`, put `X-API-Key` in the header name, and paste the **same** key into
+Secret:
+
+```sh
+echo $REFERENCE_SERVICE_KEY        # in the shell from §2
+```
+
+Submit. That exercises the rotate path properly and leaves §11 working, because the value
+you wrote is the one the service already expects. The page should then report the
+credential as updated just now.
+
+If you have already lost it, this puts it back — reading the key from the container, so
+the two cannot disagree:
+
+```sh
+KEY=$(docker compose -f docker-compose.demo.yml exec -T reference-service printenv REFERENCE_SERVICE_KEY | tr -d '\r\n')
+curl -s -X PUT $N/v1/t/beta/resources/$SVC/credential -H "Authorization: Bearer $BETA" \
+  -H 'Content-Type: application/json' \
+  -d "{\"scheme\":\"header\",\"header_name\":\"X-API-Key\",\"secret\":\"$KEY\"}"
+```
+
+**The access log.** Back as alpha.admin, *Access log*. Everything above is in it,
+including the registration you had refused. Filter to *Denied* and find the
+`licence_required` attempt. Then press the browser's back button: it returns to the
+unfiltered view, because the filters live in the URL fragment rather than in a variable —
+for a page whose job is answering "what happened", a link someone can paste is most of
+its value.
+
+The page also says that reading the log is itself a management decision and appears in
+the log. Reload and you will see your own read.
+
+## 11. The audit trail
 
 ```sh
 curl -s $N/v1/t/alpha/access-log -H "Authorization: Bearer $ALPHA" | python3 -m json.tool
@@ -277,10 +418,16 @@ That is the claim this example exists to demonstrate.
 | `403 not_permitted` invoking | you are signed in as the wrong user. Alpha consumes; Beta owns |
 | `403 not_permitted … not a member of the organisation that owns this tenant` when **listing** | expected. Listing is an owner's call; an agreement does not grant it. Paste the resource id instead |
 | `403 no_agreement` after step 8 | the agreement names a different `resource_id`. Check `$SVC` |
-| `401` from the service, passed through | the node's stored credential and `REFERENCE_SERVICE_KEY` differ. Re-run step 5 |
+| `401` / `bad or missing X-API-Key` from the service, passed through | the node's stored credential and `REFERENCE_SERVICE_KEY` differ, or there is no credential at all. Three ways to get here: a new shell regenerated the key, `up -d --build` recreated the service with a new one, or §10's credential page was submitted or *Remove*d. Check with `GET …/credential` — a 404 means it was deleted — then re-run step 5 |
+| the invoke worked before §10 and not after | §10 touches Beta's credential. See the restore command at the end of §10 |
 | `422 … internal socket` | `endpoint_url` resolves to loopback. Use the container name |
 | the browser shows a network error, not a status | CORS. The node's allowed origins must include `http://127.0.0.1:5173` |
 | sync errors in the node's log | expected; the node is not registered with the Cloud |
+| §10: *The identity provider rejected the exchange* | `http://127.0.0.1:8000/ui/*` is not a redirect URI on `circuless-ui`. The step at the end of §1 was skipped, or a later `kc.py apply` ran without those variables set and replaced the list |
+| §10: *This node is not serving its UI configuration* | `config.json` is missing. It is written at startup into the data directory, so this means that directory is not writable |
+| §10: the admin UI loads but every call fails | not CORS — the UI is served from the same origin as the API, so the allowed-origins list is not involved. Check the audience: the UI asks for `openid node:bvr-cloud`, which must match this node's id |
+| §10: signed in, but the tenant list is empty | the user is in no organisation this node hosts. Step 3 creates the tenants; step 1 puts the user in `/orgs/alpha` |
+| §10: a blank area where something should be | a markup or script fault the structural tests did not catch. Worth reporting with the view name |
 | `502 upstream_error: the upstream address could not be resolved` | the service container is not running. `docker compose -f docker-compose.demo.yml ps` — bring everything up with `up -d`, without naming a service |
 
 ## Tearing down
@@ -293,10 +440,24 @@ docker compose -f docker-compose.demo.yml down -v
 
 ## What has been verified, and by whom
 
-Steps 1–8 and 10 were run end to end while this was written. **Step 9, in a real
-browser, has not been** — browser automation is outside the node's test suite. What has
-been checked mechanically is that the page's JavaScript parses and that its PKCE
-challenge is byte-identical to the reference implementation's.
+Steps 1–8 and 11 were run end to end while this was written. **Steps 9 and 10, in a
+real browser, have not been** — browser automation is outside the node's test suite, and
+adding a runner for it would mean the build step CLAUDE.md rules out.
 
-Everything behind the page — the decision, the credential, the proxy, the access log —
+What *is* checked mechanically for §10 is narrower than it looks, and worth knowing
+before you trust a green suite:
+
+| checked in CI | not checked anywhere but here |
+|---|---|
+| every API path the UI calls is a route the node serves | that any of it renders |
+| every field it reads is a key the node returns | the sign-in round trip and PKCE against a real Keycloak |
+| every element id it looks up exists in the markup | that the progress bar moves |
+| the vocabularies match the node's enums | that a refusal leaves the form filled in |
+| no `innerHTML`, no inline handlers, no literal colours | the back button across fragment routes |
+| nothing is fetched from outside the node or its issuer | anything about how it looks |
+
+So a green suite means the UI is wired to the right API and cannot silently render
+markup; it says nothing about whether a person can use it. That is what §10 is for.
+
+Everything behind both pages — the decision, the credential, the proxy, the access log —
 is covered by `tests/test_reference_service.py`.

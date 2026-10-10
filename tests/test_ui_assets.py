@@ -31,6 +31,20 @@ def all_script_text() -> str:
     return "\n".join(path.read_text() for path in SCRIPTS)
 
 
+def without_comments(js: str) -> str:
+    """Source with its comments removed.
+
+    Needed by every test that asserts a construct is *absent*. The comments in this
+    codebase explain why something is not done, so they name the very thing being ruled
+    out — `location.assign`, the word "delete" — and a plain substring check fails on
+    the explanation rather than on the code. Twice now.
+
+    Whole-line `//` only, so an inline `https://` inside a string survives.
+    """
+    js = re.sub(r"/\*.*?\*/", "", js, flags=re.S)
+    return re.sub(r"^\s*//.*$", "", js, flags=re.M)
+
+
 def test_there_are_scripts_to_check() -> None:
     """Guards every test below, each of which would pass against an empty glob."""
     assert {path.name for path in SCRIPTS} == {"app.js", "api.js", "session.js", "fields.js"}
@@ -570,3 +584,133 @@ def test_the_upload_sends_its_bytes_by_put() -> None:
     api_js = (ASSETS / "api.js").read_text()
     [method] = re.findall(r'request\.open\("([A-Z]+)"', api_js)
     assert method == "PUT"
+
+
+# --- destructive actions ------------------------------------------------------------------
+
+
+def destructive_helpers() -> set[str]:
+    """The `api.js` helpers that issue a DELETE — the ones with no undo button."""
+    api_js = (ASSETS / "api.js").read_text()
+    found = {
+        name
+        for name, body in re.findall(r"export const (\w+) =(.*?);", api_js, re.S)
+        if '"DELETE"' in body
+    }
+    assert found, "no DELETE helpers found — this test can no longer see them"
+    return found
+
+
+def test_the_destructive_helpers_are_the_ones_we_think() -> None:
+    """Guards the reader above. A third one must fail here and be considered."""
+    assert destructive_helpers() == {"removeCredential", "withdrawResource"}
+
+
+def test_nothing_destructive_happens_without_a_confirmation() -> None:
+    """The gap this closes: *Remove credential* shipped as a bare button.
+
+    Withdrawal got a typed confirmation and credential removal did not, although it is
+    the less recoverable of the two — the secret is returned by nothing, so once gone it
+    can only be restored by someone who still has it, and the breakage surfaces at the
+    consumer as a passed-through 401 far from the click that caused it.
+
+    Checked per enclosing function rather than by counting call sites: a function that
+    reaches a DELETE must also reach `confirmDestructive`.
+    """
+    app_js = (ASSETS / "app.js").read_text()
+    # Top-level functions; `app.js` nests nothing that calls the API directly.
+    blocks = re.split(r"\n(?=(?:async )?function )", app_js)
+    destructive = destructive_helpers()
+
+    offenders = [
+        (re.findall(r"function (\w+)", block) or ["<top level>"])[0]
+        for block in blocks
+        if any(f"api.{name}(" in block for name in destructive)
+        and "confirmDestructive" not in block
+    ]
+    assert not offenders, f"these call a destructive endpoint with no confirmation: {offenders}"
+
+
+def test_the_confirmation_requires_the_resource_to_be_named() -> None:
+    """A bare yes/no would not make anyone read which resource they are acting on,
+    which is the whole reason the gate exists rather than a `confirm()`."""
+    app_js = (ASSETS / "app.js").read_text()
+
+    [guard] = re.findall(r"go\.disabled = typed\.value\.trim\(\) !== (\w+);", app_js)
+    assert guard == "phrase"
+
+    # Both callers pass the resource's own slug as that phrase.
+    phrases = re.findall(r"phrase: ([\w.]+),", app_js)
+    assert phrases == ["resource.slug", "resource.slug"], phrases
+
+
+def test_changing_view_dismisses_the_confirmation() -> None:
+    """It lives outside the views, so `show()` has to close it explicitly.
+
+    Otherwise an open "Withdraw batch-7?" panel follows the person to the next page and
+    sits under something it does not belong to — with a primed button on it.
+    """
+    app_js = (ASSETS / "app.js").read_text()
+    [body] = re.findall(r"function show\(id\) \{(.*?)\n\}", app_js, re.S)
+
+    assert 'el("confirm").hidden = true' in body, (
+        "show() leaves the confirmation panel open across a navigation"
+    )
+
+
+def test_the_withdrawal_wording_does_not_say_delete() -> None:
+    """D25 is two-stage. The bytes outlive the click, and telling someone otherwise is
+    both untrue and more frightening than the truth."""
+    app_js = (ASSETS / "app.js").read_text()
+    [block] = re.findall(r"title: `Withdraw \$\{resource\.slug\}\?`,(.*?)\}\);", app_js, re.S)
+    shown = without_comments(block)
+
+    assert "purge" in shown
+    assert "delete" not in shown.lower()
+
+
+# --- signing out ---------------------------------------------------------------------------
+
+
+def test_signing_out_reloads_rather_than_navigating() -> None:
+    """The bug: `location.assign(redirectUri())` from `/ui/#/t/alpha/resources`.
+
+    The target differs from the current URL only in the fragment, so the browser does a
+    same-document navigation and never reloads. Sign-out worked on the tenant list —
+    the one page with no fragment — and silently did nothing everywhere else.
+    """
+    session_js = without_comments((ASSETS / "session.js").read_text())
+    [body] = re.findall(r"export function signOut\(\) \{(.*?)\n\}", session_js, re.S)
+
+    assert "location.reload()" in body, "sign-out does not force the page to reload"
+    assert "history.replaceState" in body, (
+        "the fragment survives the reload, so signing in again lands back on the page "
+        "the person had just signed out of"
+    )
+    assert "location.assign" not in body, (
+        "location.assign only reloads when the URL has no fragment — see this test's docstring"
+    )
+    assert "forgetToken()" in body
+
+
+def test_the_signed_out_state_is_reached_one_way_only() -> None:
+    """`show("signed-out")` swaps the panel and nothing else.
+
+    The bar keeps the principal and the Sign out button, and the breadcrumbs keep the
+    trail of a session that has ended — so the page says both "sign in" and "signed in
+    as …" at once. `signedOut()` clears all three; nothing else may take the shortcut.
+    """
+    app_js = without_comments((ASSETS / "app.js").read_text())
+    [definition] = re.findall(r"function signedOut\(\) \{(.*?)\n\}", app_js, re.S)
+
+    # Everything it must undo, so a later addition to the bar is a deliberate omission.
+    assert 'el("who").hidden = true' in definition
+    assert 'el("sign-out").hidden = true' in definition
+    assert "setCrumbs([])" in definition
+    assert 'show("signed-out")' in definition
+
+    outside = app_js.replace(definition, "")
+    assert 'show("signed-out")' not in outside, (
+        "a call site bypasses signedOut() and will leave the bar showing the old session"
+    )
+    assert outside.count("signedOut();") >= 8, "the call sites were not routed through it"

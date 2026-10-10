@@ -21,8 +21,26 @@ const VIEWS = ["loading", "signed-out", "tenants-view", "resources-view", "resou
 /** `capabilities.accepts_sensitive` from `/.well-known`, read once after sign-in. */
 let nodeCapabilities = {};
 
+/**
+ * The signed-out state, chrome included.
+ *
+ * `show("signed-out")` alone only swapped the main panel: the bar kept the principal
+ * and the Sign out button, and the breadcrumbs kept the trail of a session that had
+ * ended. Nine call sites each had to remember to undo all three, and none did.
+ */
+function signedOut() {
+  el("who").hidden = true;
+  el("who").textContent = "";
+  el("sign-out").hidden = true;
+  setCrumbs([]);
+  show("signed-out");
+}
+
 function show(id) {
   for (const view of VIEWS) el(view).hidden = view !== id;
+  // The confirmation lives outside the views, so it would otherwise survive a
+  // navigation and sit under a page it no longer belongs to.
+  el("confirm").hidden = true;
 }
 
 /** Text, never markup. Every string below is either the node's or a person's. */
@@ -47,7 +65,7 @@ function problem(title, detail, requestId) {
 /** Everything a view can throw ends up here, so nothing fails into a blank page. */
 function showFailure(error) {
   if (error instanceof NotSignedIn) {
-    show("signed-out");
+    signedOut();
     return;
   }
   if (error instanceof Refused) {
@@ -342,6 +360,62 @@ async function logView(tenant, params) {
   show("log-view");
 }
 
+// --- confirming something destructive --------------------------------------------------
+
+/**
+ * Asks before doing something that cannot simply be undone.
+ *
+ * Typing the name, not a bare yes: both callers act on one resource out of a list of
+ * similarly named ones, and the gate exists to make someone read *which*. The same
+ * panel for both, so a third destructive action has an obvious thing to reach for —
+ * the credential's Remove shipped without any gate at all, which is the gap this
+ * closes.
+ */
+function confirmDestructive({ title, explain, phrase, label, run }) {
+  const panel = el("confirm");
+  const typed = el("confirm-phrase");
+  const go = el("confirm-go");
+  const error = el("confirm-error");
+
+  el("confirm-title").textContent = title;
+  el("confirm-explain").textContent = explain;
+  el("confirm-prompt").textContent = `Type ${phrase} to confirm`;
+  go.textContent = label;
+
+  typed.value = "";
+  go.disabled = true;
+  error.hidden = true;
+  panel.hidden = false;
+  typed.focus();
+
+  typed.oninput = () => {
+    go.disabled = typed.value.trim() !== phrase;
+  };
+  el("confirm-cancel").onclick = () => {
+    panel.hidden = true;
+  };
+
+  go.onclick = async () => {
+    go.disabled = true;
+    error.hidden = true;
+    try {
+      await run();
+      panel.hidden = true;
+      await render();
+    } catch (failure) {
+      if (failure instanceof NotSignedIn) {
+        signedOut();
+        return;
+      }
+      error.textContent = failure instanceof Refused
+        ? `${failure.detail} (${failure.reason})`
+        : String(failure.message || failure);
+      error.hidden = false;
+      go.disabled = false;
+    }
+  };
+}
+
 // --- uploading bytes ------------------------------------------------------------------
 
 function setUpUpload(tenant, resource, live) {
@@ -398,7 +472,7 @@ function setUpUpload(tenant, resource, live) {
     } catch (error) {
       bar.hidden = true;
       if (error instanceof NotSignedIn) {
-        show("signed-out");
+        signedOut();
         return;
       }
       status.textContent = error instanceof Refused
@@ -414,54 +488,20 @@ function setUpUpload(tenant, resource, live) {
 
 function setUpWithdraw(tenant, resource, live) {
   const button = el("resource-withdraw");
-  const confirm = el("withdraw-confirm");
-  const typed = el("withdraw-slug");
-  const go = el("withdraw-go");
-  const error = el("withdraw-error");
-
   button.hidden = !live;
-  confirm.hidden = true;
-  error.hidden = true;
-  typed.value = "";
-  go.disabled = true;
 
-  el("withdraw-explain").textContent =
-    `Consumers lose access immediately and the catalogue record is withdrawn. The data `
-    + `is not removed at once — the node keeps it until its purge date so a mistake can `
-    + `be undone, and access log entries are kept either way.`;
-
-  button.onclick = () => {
-    confirm.hidden = false;
-    typed.focus();
-  };
-  el("withdraw-cancel").onclick = () => {
-    confirm.hidden = true;
-  };
-
-  // Typing the slug, not a bare confirmation: the point is to make someone read which
-  // resource this is while a list of similarly named ones is a click away.
-  typed.oninput = () => {
-    go.disabled = typed.value.trim() !== resource.slug;
-  };
-
-  go.onclick = async () => {
-    go.disabled = true;
-    error.hidden = true;
-    try {
-      await api.withdrawResource(tenant, resource.id);
-      await render();
-    } catch (failure) {
-      if (failure instanceof NotSignedIn) {
-        show("signed-out");
-        return;
-      }
-      error.textContent = failure instanceof Refused
-        ? `${failure.detail} (${failure.reason})`
-        : String(failure.message || failure);
-      error.hidden = false;
-      go.disabled = false;
-    }
-  };
+  button.onclick = () => confirmDestructive({
+    title: `Withdraw ${resource.slug}?`,
+    // Not "delete": the bytes are still there and will be until the purge job runs
+    // (N20, D25). Saying otherwise would be both wrong and more frightening.
+    explain:
+      "Consumers lose access immediately and the catalogue record is withdrawn. The data "
+      + "is not removed at once — the node keeps it until its purge date so a mistake can "
+      + "be undone, and access log entries are kept either way.",
+    phrase: resource.slug,
+    label: "Withdraw",
+    run: () => api.withdrawResource(tenant, resource.id),
+  });
 }
 
 // --- the upstream credential ---------------------------------------------------------
@@ -493,7 +533,7 @@ async function credentialView(tenant, resourceId) {
     current = await api.credential(tenant, resourceId);
   } catch (error) {
     if (error instanceof NotSignedIn) {
-      show("signed-out");
+      signedOut();
       return;
     }
     if (!(error instanceof Refused) || error.status !== 404) throw error;
@@ -540,7 +580,7 @@ async function credentialView(tenant, resourceId) {
       location.assign(backTo);
     } catch (error) {
       if (error instanceof NotSignedIn) {
-        show("signed-out");
+        signedOut();
         return;
       }
       el("credential-error").textContent = error instanceof Refused
@@ -552,15 +592,21 @@ async function credentialView(tenant, resourceId) {
     }
   };
 
-  el("credential-remove").onclick = async () => {
-    try {
-      await api.removeCredential(tenant, resourceId);
-      await render();
-    } catch (error) {
-      el("credential-error").textContent = error instanceof Refused ? error.detail : String(error);
-      el("credential-error").hidden = false;
-    }
-  };
+  el("credential-remove").onclick = () => confirmDestructive({
+    title: `Remove the credential for ${resource.slug}?`,
+    // Less recoverable than withdrawing, and it was shipped without a gate: the secret
+    // is encrypted at rest and returned by nothing, so once removed it can only be put
+    // back by someone who still has it. The failure also surfaces at the consumer, as a
+    // passed-through 401 a long way from the click that caused it.
+    explain:
+      "The node will forward calls to this service with no credential at all, and the "
+      + "service will almost certainly start refusing them. The stored secret is not "
+      + "recoverable — setting one again means having it to hand. To change it rather "
+      + "than remove it, cancel and submit the form instead.",
+    phrase: resource.slug,
+    label: "Remove credential",
+    run: () => api.removeCredential(tenant, resourceId),
+  });
 }
 
 // --- the resource form -------------------------------------------------------------------
@@ -709,7 +755,7 @@ async function formView(tenant, resourceId) {
       location.assign(`#/t/${encodeURIComponent(tenant)}/r/${encodeURIComponent(saved.id)}`);
     } catch (error) {
       if (error instanceof NotSignedIn) {
-        show("signed-out");
+        signedOut();
         return;
       }
       // Shown in the form, not as a page: the node's 422s name a field, and the person
@@ -756,7 +802,7 @@ function route() {
 
 async function render() {
   if (!token()) {
-    show("signed-out");
+    signedOut();
     return;
   }
   show("loading");
@@ -798,7 +844,7 @@ async function start() {
   }
 
   if (!token()) {
-    show("signed-out");
+    signedOut();
     return;
   }
 
@@ -816,7 +862,7 @@ async function start() {
   } catch (error) {
     if (error instanceof NotSignedIn) {
       forgetToken();
-      show("signed-out");
+      signedOut();
       return;
     }
     showFailure(error);

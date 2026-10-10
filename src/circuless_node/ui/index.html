@@ -100,24 +100,6 @@
       </button>
     </p>
 
-    <!-- Not a confirm(): it cannot be styled, cannot say what withdrawal actually does,
-         and cannot ask for the slug. The wording avoids "delete" on purpose — the data
-         is still there, and will be until the purge date the node returns. -->
-    <section class="panel panel--problem" id="withdraw-confirm" hidden>
-      <h2>Withdraw this resource?</h2>
-      <p id="withdraw-explain"></p>
-      <div class="field">
-        <label class="field__label" for="withdraw-slug">Type the slug to confirm</label>
-        <input class="field__input" type="text" id="withdraw-slug" autocomplete="off">
-      </div>
-      <p class="notice notice--problem" id="withdraw-error" hidden></p>
-      <div class="form__actions">
-        <button type="button" class="button button--danger" id="withdraw-go" disabled>
-          Withdraw
-        </button>
-        <button type="button" class="button button--quiet" id="withdraw-cancel">Cancel</button>
-      </div>
-    </section>
   </section>
 
   <section id="credential-view" hidden>
@@ -211,6 +193,24 @@
       <span class="muted" id="log-range"></span>
       <a class="button button--quiet" id="log-next">Next</a>
     </nav>
+  </section>
+
+  <!-- One confirmation for every destructive action, outside the views so both the
+       resource page and the credential page use the same one. Not a confirm(): that
+       cannot be styled, cannot explain what the action actually does, and cannot ask
+       anyone to name the thing they are acting on. -->
+  <section class="panel panel--problem" id="confirm" hidden>
+    <h2 id="confirm-title"></h2>
+    <p id="confirm-explain"></p>
+    <div class="field">
+      <label class="field__label" for="confirm-phrase" id="confirm-prompt"></label>
+      <input class="field__input" type="text" id="confirm-phrase" autocomplete="off">
+    </div>
+    <p class="notice notice--problem" id="confirm-error" hidden></p>
+    <div class="form__actions">
+      <button type="button" class="button button--danger" id="confirm-go" disabled></button>
+      <button type="button" class="button button--quiet" id="confirm-cancel">Cancel</button>
+    </div>
   </section>
 
   <section class="panel panel--problem" id="problem" hidden>

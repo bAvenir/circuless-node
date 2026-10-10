@@ -121,5 +121,14 @@ export function signOut() {
   // Local only. Ending the Keycloak session as well would sign the person out of every
   // CIRCULess interface they have open, which is not what "sign out of this node" means.
   forgetToken();
-  location.assign(redirectUri());
+
+  // `location.assign(redirectUri())` was wrong here. From `/ui/#/t/alpha/resources` the
+  // target differs only in the fragment, so the browser performs a same-document
+  // navigation and never reloads — sign-out appeared to do nothing from every page
+  // except the tenant list, which is the one page that has no fragment.
+  //
+  // Replacing the entry first drops the fragment from history, so the reload lands on
+  // the signed-out page rather than back on the resource someone just left.
+  history.replaceState(null, "", redirectUri());
+  location.reload();
 }
