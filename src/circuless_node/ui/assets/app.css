@@ -313,3 +313,51 @@ h2 {
 
 .pill--allow { background: var(--cl-bg-selected); color: var(--cl-forest); }
 .pill--deny { background: var(--cl-bg-sunken); color: var(--cl-danger); }
+
+/* ---- forms ------------------------------------------------------------------------ */
+
+.field { margin-bottom: var(--cl-space-5); }
+
+.field__label {
+  display: block;
+  margin-bottom: var(--cl-space-2);
+  font-size: var(--cl-text-sm);
+  color: var(--cl-ink-muted);
+}
+
+.field__input {
+  font: inherit;
+  width: 100%;
+  padding: var(--cl-space-2) var(--cl-space-3);
+  background: var(--cl-bg);
+  color: var(--cl-ink);
+  border: var(--cl-border-width) solid var(--cl-line-strong);
+  border-radius: var(--cl-radius-sm);
+}
+
+textarea.field__input {
+  font-family: var(--cl-font-mono);
+  font-size: var(--cl-text-sm);
+  resize: vertical;
+}
+
+.field__input:disabled,
+.field__input option:disabled { color: var(--cl-ink-faint); }
+
+.field__hint {
+  margin: var(--cl-space-2) 0 0;
+  font-size: var(--cl-text-xs);
+  color: var(--cl-ink-faint);
+}
+
+.form__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--cl-space-3);
+  margin-top: var(--cl-space-6);
+}
+
+.notice--problem {
+  border-left-color: var(--cl-danger);
+  color: var(--cl-danger);
+}

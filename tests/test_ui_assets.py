@@ -33,7 +33,7 @@ def all_script_text() -> str:
 
 def test_there_are_scripts_to_check() -> None:
     """Guards every test below, each of which would pass against an empty glob."""
-    assert {path.name for path in SCRIPTS} == {"app.js", "api.js", "session.js"}
+    assert {path.name for path in SCRIPTS} == {"app.js", "api.js", "session.js", "fields.js"}
 
 
 # --- the markup and the script agree ---------------------------------------------------
@@ -77,6 +77,40 @@ def wildcarded(path: str) -> str:
     return "/" + re.sub(r"\$?\{[^}]*\}", "*", path).lstrip("/")
 
 
+def api_helpers() -> dict[str, str]:
+    """Every exported helper in `api.js`, mapped to the path it calls.
+
+    Per helper rather than by scanning for call sites, because the scanning version kept
+    going quietly blind: first when a call grew a second argument, then again when
+    `send("POST", path)` put a method literal where the path used to be. Reading each
+    helper means a helper whose path cannot be found is a failure, not an absence.
+    """
+    api_js = (ASSETS / "api.js").read_text()
+    found: dict[str, str] = {}
+
+    for name, body in re.findall(r"export const (\w+) =(.*?);", api_js, re.S):
+        # Skip the HTTP method `send` takes first; the path is the other string literal.
+        paths = [lit for lit in re.findall(r'[`"]([^`"]+)[`"]', body) if not lit.isupper()]
+        assert paths, f"{name} calls no path this test can read"
+        found[name] = paths[0]
+
+    return found
+
+
+def test_the_helpers_are_all_found() -> None:
+    """Guards the reader above, which every path test depends on."""
+    assert set(api_helpers()) == {
+        "whoami",
+        "nodeDocument",
+        "tenants",
+        "resources",
+        "resource",
+        "accessLog",
+        "createResource",
+        "patchResource",
+    }
+
+
 def test_every_api_path_the_ui_calls_is_a_real_route(settings: Settings) -> None:
     """The drift this catches is invisible until someone clicks the thing.
 
@@ -84,25 +118,13 @@ def test_every_api_path_the_ui_calls_is_a_real_route(settings: Settings) -> None
     that the UI reports as "Not found" — indistinguishable, to the person reading it,
     from a resource that genuinely is not there.
     """
-    # `api.js` only: `session.js` calls `params.get("code")` on a URLSearchParams, which
-    # the same pattern happily reads as an API path. The test below keeps that narrowing
-    # honest by pinning that no other module builds a `v1/` path.
-    api_js = (ASSETS / "api.js").read_text()
-    # `[,)]`, not `)`. The first version of this required the closing paren immediately
-    # after the string, so the day a call grew a second argument its path stopped being
-    # checked — silently, with the test still green. Found by `accessLog(tenant, params)`.
-    called = set(re.findall(r'\bget\([`"]([^`"]+)[`"]\s*[,)]', api_js))
     served = {wildcarded(path) for path in route_paths(create_public_app(settings))}
 
-    # Not just "matched something": matched *every* helper. A call shape the pattern
-    # cannot read is the failure mode this test has already had once.
-    helpers = set(re.findall(r"export const (\w+) = ", api_js))
-    assert len(called) == len(helpers), (
-        f"{len(helpers)} exported helpers but {len(called)} paths matched — "
-        f"the pattern cannot read one of them: {sorted(helpers)}"
-    )
-
-    unknown = {path for path in called if wildcarded(path) not in served}
+    unknown = {
+        f"{name} -> {path}"
+        for name, path in api_helpers().items()
+        if wildcarded(path) not in served
+    }
     assert not unknown, f"the UI calls paths this node does not serve: {sorted(unknown)}"
 
 
@@ -328,3 +350,131 @@ def test_every_script_is_served(tmp_path) -> None:
 
     for path in SCRIPTS:
         assert client.get(f"/ui/assets/{path.name}").status_code == 200, path.name
+
+
+# --- the vocabularies the form hardcodes -----------------------------------------------
+#
+# `fields.js` duplicates the node's enums because nothing publishes them. The duplication
+# is fine; the duplication going stale is not, and a missing Theme would show up as an
+# option nobody can pick rather than as an error.
+
+
+def js_list(name: str) -> list[str]:
+    body = (ASSETS / "fields.js").read_text()
+    [block] = re.findall(rf"export const {name} = \[(.*?)\];", body, re.S)
+    found = re.findall(r'"([^"]+)"', block)
+    assert found, f"{name} parsed as empty — the pattern cannot read it"
+    return found
+
+
+def test_the_form_offers_exactly_the_node_s_vocabularies() -> None:
+    from circuless_node.models import (
+        Classification,
+        Discoverability,
+        ResourceKind,
+        Theme,
+        Visibility,
+    )
+    from circuless_node.vocabularies import LICENCES
+
+    for name, enum in [
+        ("KINDS", ResourceKind),
+        ("THEMES", Theme),
+        ("CLASSIFICATIONS", Classification),
+        ("VISIBILITIES", Visibility),
+        ("DISCOVERABILITIES", Discoverability),
+    ]:
+        assert js_list(name) == [member.value for member in enum], name
+
+    assert set(js_list("LICENCES")) == set(LICENCES)
+
+
+def test_the_shape_choices_exclude_the_one_a_dataset_may_not_have() -> None:
+    """`ResourceIn` refuses `shape=service` on a dataset, and forces it on a service.
+
+    So the dropdown is a dataset's choices only — a structural rule, not a value one:
+    there is no form in which a person picks `service` as a shape.
+    """
+    from circuless_node.models import Shape
+
+    assert js_list("DATASET_SHAPES") == [s.value for s in Shape if s is not Shape.SERVICE]
+
+
+# --- the fields themselves ---------------------------------------------------------------
+
+
+def form_fields() -> list[dict]:
+    """`FIELDS` from `fields.js`, as far as Python needs to read it."""
+    body = (ASSETS / "fields.js").read_text()
+    [block] = re.findall(r"export const FIELDS = \[(.*?)\n\];", body, re.S)
+    entries = re.findall(r"\{(.*?)\}(?=,\n|\n)", block, re.S)
+    parsed = []
+    for entry in entries:
+        [name] = re.findall(r'name: "([^"]+)"', entry)
+        kinds = re.findall(r"kinds: \[([^\]]*)\]", entry)
+        parsed.append(
+            {
+                "name": name,
+                "kinds": re.findall(r'"([^"]+)"', kinds[0]) if kinds else None,
+                "create": "create: true" in entry,
+            }
+        )
+    assert parsed, "FIELDS parsed as empty — the pattern cannot read it"
+    return parsed
+
+
+def test_every_form_field_is_one_the_node_accepts() -> None:
+    """A field the node ignores silently does nothing, which looks like it worked."""
+    from circuless_node.resources import ResourceIn, ResourcePatch
+
+    for field in form_fields():
+        model = ResourceIn if field["create"] else ResourcePatch
+        assert field["name"] in model.model_fields, (
+            f"{field['name']} is not a field of {model.__name__}"
+        )
+
+
+def test_the_fields_a_create_form_omits_are_not_required_by_the_node() -> None:
+    """The inverse: a required field missing from the form cannot be filled in at all."""
+    from circuless_node.resources import ResourceIn
+
+    offered = {field["name"] for field in form_fields()}
+    required = {name for name, info in ResourceIn.model_fields.items() if info.is_required()}
+    assert required <= offered, f"the form cannot supply: {sorted(required - offered)}"
+
+
+def test_the_kind_split_matches_what_the_node_refuses() -> None:
+    """The structural rule, proved against `coherent_for_its_kind` rather than restated.
+
+    A dataset form must be able to produce a valid dataset, and must not offer the
+    fields that make one invalid. Both halves are checked by building the payload the
+    form would send and handing it to the model.
+    """
+    import pydantic
+
+    from circuless_node.resources import ResourceIn
+
+    def shown(kind: str) -> set[str]:
+        return {
+            field["name"]
+            for field in form_fields()
+            if field["kinds"] is None or kind in field["kinds"]
+        }
+
+    base = {"title": "T", "theme": "processing", "classification": "synthetic"}
+
+    dataset = ResourceIn(slug="d", kind="dataset", **base)
+    assert dataset.shape.value == "file"
+
+    service = ResourceIn(slug="s", kind="service", endpoint_url="https://upstream.example", **base)
+    assert service.shape.value == "service"
+
+    # Each field the form hides for a kind is one the node refuses for that kind.
+    for kind, hidden, value in [
+        ("dataset", "endpoint_url", "https://upstream.example"),
+        ("service", "storage_path", "some/path"),
+    ]:
+        assert hidden not in shown(kind), f"{kind} should not offer {hidden}"
+        extra = {"endpoint_url": "https://upstream.example"} if kind == "service" else {}
+        with pytest.raises(pydantic.ValidationError):
+            ResourceIn(slug="x", kind=kind, **base, **extra, **{hidden: value})

@@ -10,12 +10,16 @@
 
 import * as api from "./api.js";
 import { NotSignedIn, Refused } from "./api.js";
+import { fieldsFor } from "./fields.js";
 import { completeSignIn, forgetToken, loadConfig, redirectUri, signIn, signOut, token }
   from "./session.js";
 
 const el = (id) => document.getElementById(id);
 const VIEWS = ["loading", "signed-out", "tenants-view", "resources-view", "resource-view",
-  "log-view", "problem"];
+  "log-view", "form-view", "problem"];
+
+/** `capabilities.accepts_sensitive` from `/.well-known`, read once after sign-in. */
+let nodeCapabilities = {};
 
 function show(id) {
   for (const view of VIEWS) el(view).hidden = view !== id;
@@ -134,6 +138,7 @@ async function resourcesView(tenant) {
   body.replaceChildren();
 
   el("resources-log-link").href = `#/t/${encodeURIComponent(tenant)}/log`;
+  el("resources-new-link").href = `#/t/${encodeURIComponent(tenant)}/new`;
   el("resources-empty").hidden = resources.length > 0;
   el("resources-table").hidden = resources.length === 0;
   el("resources-count").textContent =
@@ -220,6 +225,8 @@ async function resourceView(tenant, id) {
 
   el("resource-log-link").href =
     `#/t/${encodeURIComponent(tenant)}/log?resource=${encodeURIComponent(resource.id)}`;
+  el("resource-edit-link").href =
+    `#/t/${encodeURIComponent(tenant)}/r/${encodeURIComponent(resource.id)}/edit`;
 
   show("resource-view");
 }
@@ -324,6 +331,167 @@ async function logView(tenant, params) {
   show("log-view");
 }
 
+// --- the resource form -------------------------------------------------------------------
+
+/** Builds one labelled control. Returns the input so the caller can read it back. */
+function renderField(parent, field, value) {
+  const row = fill(parent, "div", "field");
+  const label = fill(row, "label", "field__label", field.label + (field.required ? " *" : ""));
+  label.htmlFor = `f-${field.name}`;
+
+  let input;
+  if (field.type === "select") {
+    input = fill(row, "select", "field__input");
+    if (field.blank !== undefined || !field.required) {
+      const blank = fill(input, "option", "", field.blank || "—");
+      blank.value = "";
+    }
+    for (const option of field.options) {
+      const node = fill(input, "option", "", option);
+      node.value = option;
+      // D22: a BVR-operated node refuses sensitive data. The node still refuses it if
+      // this is bypassed — this only stops someone filling in a long form to be told so.
+      if (field.name === "classification" && option === "sensitive"
+          && nodeCapabilities.accepts_sensitive === false) {
+        node.disabled = true;
+        node.textContent = "sensitive — this node does not hold sensitive data";
+      }
+    }
+  } else if (field.type === "textarea" || field.type === "json") {
+    input = fill(row, "textarea", "field__input");
+    input.rows = field.type === "json" ? 6 : 3;
+  } else {
+    input = fill(row, "input", "field__input");
+    input.type = "text";
+  }
+
+  input.id = `f-${field.name}`;
+  input.name = field.name;
+  if (value !== null && value !== undefined) {
+    input.value = field.type === "json" ? JSON.stringify(value, null, 2) : String(value);
+  }
+  if (field.hint) fill(row, "p", "field__hint", field.hint);
+  return input;
+}
+
+/** Reads the form back. Throws on malformed JSON so it is reported like any refusal. */
+function readForm(fields, inputs, { creating, original }) {
+  const body = {};
+
+  for (const field of fields) {
+    const raw = inputs[field.name].value.trim();
+
+    let value = raw === "" ? null : raw;
+    if (value !== null && field.type === "json") {
+      try {
+        value = JSON.parse(raw);
+      } catch (error) {
+        throw new Error(`${field.label} is not valid JSON: ${error.message}`);
+      }
+    }
+
+    if (creating) {
+      // Absent means "the node's default", which is the closed end (NFR4). Sending null
+      // would be asking for null, which is a different thing.
+      if (value !== null) body[field.name] = value;
+      continue;
+    }
+
+    // Editing: send only what changed. `ResourcePatch` reads an absent field as "leave
+    // it alone", so sending everything back would rewrite fields nobody touched — and
+    // would turn a field someone cleared into a null the node cannot tell from untouched.
+    const before = original[field.name];
+    const unchanged = (before === null || before === undefined ? null : before) === value
+      || JSON.stringify(before ?? null) === JSON.stringify(value);
+    if (!unchanged) body[field.name] = value;
+  }
+
+  return body;
+}
+
+async function formView(tenant, resourceId) {
+  const creating = !resourceId;
+  const original = creating ? {} : await api.resource(tenant, resourceId);
+
+  const backTo = creating
+    ? `#/t/${encodeURIComponent(tenant)}/resources`
+    : `#/t/${encodeURIComponent(tenant)}/r/${encodeURIComponent(resourceId)}`;
+
+  setCrumbs([
+    { label: "Organisations", hash: "#/" },
+    { label: tenant, hash: `#/t/${encodeURIComponent(tenant)}/resources` },
+    creating ? { label: "Register" } : { label: original.slug, hash: backTo },
+    ...(creating ? [] : [{ label: "Edit" }]),
+  ]);
+
+  el("form-title").textContent = creating ? "Register a resource" : `Edit ${original.slug}`;
+  el("form-intro").textContent = creating
+    ? "A new resource is hidden and visible to your organisation only until you say otherwise."
+    : "The slug and the kind cannot be changed; registering a different one is the way.";
+  el("form-error").hidden = true;
+  el("form-submit").textContent = creating ? "Register" : "Save changes";
+  el("form-cancel").href = backTo;
+
+  const container = el("form-fields");
+  let inputs = {};
+  let fields = [];
+
+  const draw = (kind) => {
+    const kept = Object.fromEntries(
+      Object.entries(inputs).map(([name, input]) => [name, input.value]),
+    );
+    container.replaceChildren();
+    fields = fieldsFor(kind, { creating });
+    inputs = {};
+    for (const field of fields) {
+      inputs[field.name] = renderField(container, field, original[field.name]);
+      // Redrawing on a kind change must not empty what has already been typed.
+      if (kept[field.name] !== undefined) inputs[field.name].value = kept[field.name];
+    }
+    if (creating) {
+      inputs.kind.value = kind;
+      inputs.kind.addEventListener("change", () => draw(inputs.kind.value));
+    }
+  };
+
+  draw(creating ? "dataset" : original.kind);
+  show("form-view");
+
+  el("form").onsubmit = async (event) => {
+    event.preventDefault();
+    el("form-error").hidden = true;
+    el("form-submit").disabled = true;
+
+    try {
+      const body = readForm(fields, inputs, { creating, original });
+
+      if (!creating && Object.keys(body).length === 0) {
+        location.assign(backTo);
+        return;
+      }
+
+      const saved = creating
+        ? await api.createResource(tenant, body)
+        : await api.patchResource(tenant, resourceId, body);
+
+      location.assign(`#/t/${encodeURIComponent(tenant)}/r/${encodeURIComponent(saved.id)}`);
+    } catch (error) {
+      if (error instanceof NotSignedIn) {
+        show("signed-out");
+        return;
+      }
+      // Shown in the form, not as a page: the node's 422s name a field, and the person
+      // needs to be looking at that field while they read the message.
+      el("form-error").textContent = error instanceof Refused
+        ? `${error.detail} (${error.reason})`
+        : error.message;
+      el("form-error").hidden = false;
+    } finally {
+      el("form-submit").disabled = false;
+    }
+  };
+}
+
 // --- routing -----------------------------------------------------------------------------
 
 /**
@@ -340,8 +508,14 @@ function route() {
   const params = new URLSearchParams(query || "");
 
   if (parts[0] === "t" && parts[2] === "resources") return resourcesView(parts[1]);
-  if (parts[0] === "t" && parts[2] === "r" && parts[3]) return resourceView(parts[1], parts[3]);
+  if (parts[0] === "t" && parts[2] === "r" && parts[3] && !parts[4]) {
+    return resourceView(parts[1], parts[3]);
+  }
   if (parts[0] === "t" && parts[2] === "log") return logView(parts[1], params);
+  if (parts[0] === "t" && parts[2] === "new") return formView(parts[1], null);
+  if (parts[0] === "t" && parts[2] === "r" && parts[4] === "edit") {
+    return formView(parts[1], parts[3]);
+  }
   return tenantsView();
 }
 
@@ -400,6 +574,10 @@ async function start() {
     el("who").textContent = `${who.principal_type} · ${who.sub.slice(0, 8)}`;
     el("who").hidden = false;
     el("sign-out").hidden = false;
+
+    // What this node will and will not hold (D22). Token-gated, so it is read here
+    // rather than from config.json, which may carry no node state.
+    nodeCapabilities = (await api.nodeDocument()).capabilities || {};
   } catch (error) {
     if (error instanceof NotSignedIn) {
       forgetToken();

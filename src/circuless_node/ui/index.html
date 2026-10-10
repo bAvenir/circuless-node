@@ -47,7 +47,10 @@
   <section id="resources-view" hidden>
     <h1 id="resources-title"></h1>
     <p class="muted" id="resources-count"></p>
-    <p><a id="resources-log-link" class="link">Access log</a></p>
+    <p>
+      <a id="resources-log-link" class="link">Access log</a>
+      <a id="resources-new-link" class="button">Register a resource</a>
+    </p>
 
     <p class="empty" id="resources-empty" hidden>
       This organisation has registered nothing on this node yet.
@@ -74,7 +77,27 @@
       <pre class="code" id="resource-policy-body"></pre>
     </section>
 
-    <p><a id="resource-log-link" class="link">Access log for this resource</a></p>
+    <p>
+      <a id="resource-log-link" class="link">Access log for this resource</a>
+      <a id="resource-edit-link" class="button button--quiet">Edit metadata</a>
+    </p>
+  </section>
+
+  <section id="form-view" hidden>
+    <h1 id="form-title"></h1>
+    <p class="muted" id="form-intro"></p>
+
+    <!-- The node's refusal, shown where the person is looking rather than as a page
+         replacement: a 422 on the last field should not take the filled-in form away. -->
+    <p class="notice notice--problem" id="form-error" hidden></p>
+
+    <form id="form" novalidate>
+      <div id="form-fields"></div>
+      <div class="form__actions">
+        <button type="submit" class="button" id="form-submit">Save</button>
+        <a class="button button--quiet" id="form-cancel">Cancel</a>
+      </div>
+    </form>
   </section>
 
   <section id="log-view" hidden>

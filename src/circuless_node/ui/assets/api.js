@@ -62,7 +62,29 @@ export async function get(path, params) {
   throw await describe(response);
 }
 
+/** Everything that changes something. Same error contract as `get`. */
+async function send(method, path, body) {
+  const response = await fetch(`../${path}`, {
+    method,
+    headers: {
+      Authorization: `Bearer ${token()}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (response.status === 204) return null;
+  if (response.ok) return response.json();
+
+  if (response.status === 401) {
+    forgetToken();
+    throw new NotSignedIn();
+  }
+  throw await describe(response);
+}
+
 export const whoami = () => get("v1/whoami");
+export const nodeDocument = () => get(".well-known/circuless-node");
 export const tenants = () => get("v1/tenants");
 export const resources = (tenant) => get(`v1/t/${encodeURIComponent(tenant)}/resources`);
 export const resource = (tenant, id) =>
@@ -70,3 +92,9 @@ export const resource = (tenant, id) =>
 
 export const accessLog = (tenant, params) =>
   get(`v1/t/${encodeURIComponent(tenant)}/access-log`, params);
+
+export const createResource = (tenant, body) =>
+  send("POST", `v1/t/${encodeURIComponent(tenant)}/resources`, body);
+
+export const patchResource = (tenant, id, body) =>
+  send("PATCH", `v1/t/${encodeURIComponent(tenant)}/resources/${encodeURIComponent(id)}`, body);
