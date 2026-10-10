@@ -47,6 +47,12 @@ class Settings(BaseSettings):
         default="",
         description="Keycloak client this node authenticates as. Defaults to node-<node_id>.",
     )
+    ui_client_id: str = Field(
+        default="circuless-ui",
+        description="Keycloak client the admin UI signs in as. A public client doing "
+        "Auth Code + PKCE in the browser — not node_client_id, which is confidential and "
+        "belongs to the node itself.",
+    )
 
     # --- what this node is allowed to hold ---------------------------------------------
     operator: NodeOperator = Field(

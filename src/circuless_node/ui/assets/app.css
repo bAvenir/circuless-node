@@ -1,0 +1,146 @@
+/* Layout only. Every colour, space and radius comes from tokens.css — never a literal
+ * (design.md §1), which is also why this file has no hex in it at all. */
+
+body {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+/* ---- the bar ------------------------------------------------------------------- */
+
+.bar {
+  display: flex;
+  align-items: center;
+  gap: var(--cl-space-3);
+  padding: var(--cl-space-3) var(--cl-space-5);
+  background: var(--cl-bg-raised);
+  border-bottom: var(--cl-border-width) solid var(--cl-line);
+}
+
+.bar__logo { height: 28px; }
+.bar__spacer { flex: 1; }
+
+.bar__node,
+.bar__who {
+  font-size: var(--cl-text-sm);
+  color: var(--cl-ink-muted);
+}
+
+.bar__node {
+  padding: var(--cl-space-1) var(--cl-space-3);
+  background: var(--cl-bg-sunken);
+  border-radius: var(--cl-radius-pill);
+  font-family: var(--cl-font-mono);
+}
+
+/* ---- main --------------------------------------------------------------------- */
+
+main {
+  flex: 1;
+  width: 100%;
+  max-width: 54rem;
+  margin: 0 auto;
+  padding: var(--cl-space-6) var(--cl-space-4);
+}
+
+h1 {
+  font-size: var(--cl-text-xl);
+  line-height: var(--cl-leading-tight);
+  margin: 0 0 var(--cl-space-2);
+}
+
+h2 {
+  font-size: var(--cl-text-lg);
+  line-height: var(--cl-leading-tight);
+  margin: 0 0 var(--cl-space-2);
+}
+
+.muted { color: var(--cl-ink-muted); }
+.mono { font-family: var(--cl-font-mono); font-size: var(--cl-text-xs); }
+
+.panel {
+  padding: var(--cl-space-5);
+  background: var(--cl-bg-raised);
+  border: var(--cl-border-width) solid var(--cl-line);
+  border-radius: var(--cl-radius);
+}
+
+.panel--problem { border-color: var(--cl-danger); }
+.panel--problem h2 { color: var(--cl-danger); }
+
+/* ---- buttons ------------------------------------------------------------------- */
+
+.button {
+  font: inherit;
+  padding: var(--cl-space-2) var(--cl-space-4);
+  background: var(--cl-action-bg);
+  color: var(--cl-action-ink);
+  border: var(--cl-border-width) solid transparent;
+  border-radius: var(--cl-radius-sm);
+  cursor: pointer;
+  transition: background var(--cl-transition);
+}
+
+.button:hover { background: var(--cl-action-bg-hover); }
+
+.button--quiet {
+  background: transparent;
+  color: var(--cl-ink-muted);
+  border-color: var(--cl-line-strong);
+}
+
+.button--quiet:hover { background: var(--cl-bg-hover); }
+
+/* ---- the tenant list ------------------------------------------------------------ */
+
+.tenants {
+  list-style: none;
+  margin: var(--cl-space-4) 0 0;
+  padding: 0;
+  display: grid;
+  gap: var(--cl-space-3);
+}
+
+.tenant {
+  display: flex;
+  align-items: baseline;
+  gap: var(--cl-space-3);
+  padding: var(--cl-space-4);
+  background: var(--cl-bg-raised);
+  border: var(--cl-border-width) solid var(--cl-line);
+  border-radius: var(--cl-radius);
+}
+
+.tenant__slug {
+  font-family: var(--cl-font-mono);
+  font-size: var(--cl-text-lg);
+}
+
+.tenant__org {
+  color: var(--cl-ink-muted);
+  font-size: var(--cl-text-sm);
+}
+
+.tenant__role {
+  margin-left: auto;
+  padding: var(--cl-space-1) var(--cl-space-3);
+  border-radius: var(--cl-radius-pill);
+  font-size: var(--cl-text-xs);
+  background: var(--cl-bg-sunken);
+  color: var(--cl-ink-muted);
+}
+
+/* The distinction GET /v1/tenants returns `can_manage` for: an interface that showed
+ * only one of these would make "member, not admin" look like "not hosted here". */
+.tenant__role--manage {
+  background: var(--cl-bg-selected);
+  color: var(--cl-forest);
+}
+
+.empty {
+  padding: var(--cl-space-5);
+  border: var(--cl-border-width) dashed var(--cl-line-strong);
+  border-radius: var(--cl-radius);
+  color: var(--cl-ink-muted);
+}

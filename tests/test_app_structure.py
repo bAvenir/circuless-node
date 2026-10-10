@@ -14,12 +14,12 @@ from starlette.testclient import TestClient
 from circuless_node.app import (
     ANONYMOUS_PREFIXES,
     API_PREFIX,
-    UI_DIRECTORY,
     UNVERSIONED_PATHS,
     create_internal_app,
     create_public_app,
 )
 from circuless_node.settings import Settings
+from circuless_node.ui_staging import UI_SOURCE
 
 from .harness.routes import route_paths, route_table
 
@@ -148,9 +148,9 @@ def test_the_ui_ships_inside_the_package() -> None:
     """Vendored, not linked (design.md), and inside `src/circuless_node` so the wheel
     carries it. A node on a partner's premises must render with no outbound request, and
     a UI that is only in the repository renders as a 404 once installed."""
-    assert (UI_DIRECTORY / "index.html").is_file()
-    assert (UI_DIRECTORY / "assets" / "tokens.css").is_file()
-    assert UI_DIRECTORY.parent.name == "circuless_node"
+    assert (UI_SOURCE / "index.html").is_file()
+    assert (UI_SOURCE / "assets" / "tokens.css").is_file()
+    assert UI_SOURCE.parent.name == "circuless_node"
 
 
 def test_the_overlay_stack_publishes_no_host_port() -> None:

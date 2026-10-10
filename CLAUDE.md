@@ -34,7 +34,8 @@ Each one has a test. A change that weakens one needs J's explicit approval.
    - `/healthz` — overlay or internal interface only, status code, no body;
    - `/metrics` and `POST /internal/authz` — internal or overlay interface only.
 2. **No anonymous routes** (D21), with exactly one exemption. Every route requires a valid token. A CI test lists everything the app serves — API routes *and* mounted static trees — and asserts that a request without a token gets 401. New routes are covered automatically.
-   - The exemption is `/ui/*`, the admin UI's static files, recorded in `app.ANONYMOUS_PREFIXES` and asserted there. A browser cannot present a token for the request that fetches the code which obtains the token. Nothing data-bearing is ever served from that tree.
+   - The exemption is `/ui/*`, the admin UI's static files, recorded in `app.ANONYMOUS_PREFIXES` and asserted there. A browser cannot present a token for the request that fetches the code which obtains the token.
+   - **What may be served from that tree:** no tenant data, no node state, and nothing that is not already public by OAuth design. `config.json` carries an issuer, a public client id, the node id and a scope — four keys, asserted in `ui_staging.CONFIG_KEYS` and refused at startup if widened. A tenant list, a resource name or a count of anything is an API route behind a token.
    - **Never add a second.** That is a change to D21 and needs J's approval; the assertion fails until it is edited.
 3. **Token checks, in this order** (N2):
    - signature against the cached JWKS — on an unknown `kid`, refetch **once**, rate-limited;

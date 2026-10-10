@@ -19,8 +19,6 @@ public app mounts one router, which carries the prefix — and asserted by a tes
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from fastapi import APIRouter, Depends, FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -39,6 +37,7 @@ from .subject import Subject, resolve_acting_org
 from .sync import SyncState, metrics_text
 from .tenants import tenant_router
 from .transfer import transfer_router
+from .ui_staging import stage_ui
 from .upload import upload_router
 from .well_known import node_document
 
@@ -52,9 +51,6 @@ API_PREFIX = "/v1"
 #: D21 has no anonymous routes, and this one least of all (see `well_known`).
 UNVERSIONED_PATHS = {"/.well-known/circuless-node"}
 
-#: The admin UI's static files, vendored into the package so a node on a partner's
-#: premises renders with no outbound request of any kind (design.md).
-UI_DIRECTORY = Path(__file__).parent / "ui"
 
 #: The one exemption to D21, and the only place it is written down. Asserted, like
 #: `UNVERSIONED_PATHS`, so a second entry fails a test before it reaches a review.
@@ -70,9 +66,11 @@ UI_DIRECTORY = Path(__file__).parent / "ui"
 #: every `/v1` route still refuses an anonymous request, which is what the UI's own
 #: tokens are for.
 #:
-#: **The rule that comes with it:** nothing data-bearing is ever served from this tree.
-#: Not a bootstrapped tenant list, not a config file with an issuer in it, not an error
-#: page naming a resource. The moment that is wanted, it is an API route behind a token.
+#: **The rule that comes with it:** no tenant data, no node state, and nothing that is
+#: not already public by OAuth design. `config.json` carries an issuer and a public
+#: client id, which a redirect URL would disclose anyway; see `ui_staging` for the
+#: reasoning and for the assertion that pins the key set. A bootstrapped tenant list, a
+#: resource name or a count of anything is an API route behind a token instead.
 ANONYMOUS_PREFIXES = ("/ui",)
 
 
@@ -143,7 +141,7 @@ def create_public_app(settings: Settings | None = None) -> FastAPI:
     # absent in a wheel built wrong — and the gate would go quiet rather than fail.
     app.mount(
         ANONYMOUS_PREFIXES[0],
-        StaticFiles(directory=UI_DIRECTORY, html=True),
+        StaticFiles(directory=stage_ui(settings), html=True),
         name="ui",
     )
     return app
