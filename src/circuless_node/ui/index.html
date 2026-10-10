@@ -47,6 +47,7 @@
   <section id="resources-view" hidden>
     <h1 id="resources-title"></h1>
     <p class="muted" id="resources-count"></p>
+    <p><a id="resources-log-link" class="link">Access log</a></p>
 
     <p class="empty" id="resources-empty" hidden>
       This organisation has registered nothing on this node yet.
@@ -72,6 +73,42 @@
       <h2>Invoke policy</h2>
       <pre class="code" id="resource-policy-body"></pre>
     </section>
+
+    <p><a id="resource-log-link" class="link">Access log for this resource</a></p>
+  </section>
+
+  <section id="log-view" hidden>
+    <h1>Access log</h1>
+    <p class="muted" id="log-scope"></p>
+
+    <!-- Worth saying plainly. An admin who did not know would discover it in the log
+         itself, which is a worse way to find out. -->
+    <p class="muted">Reading this log is itself a management decision, so it appears here.</p>
+
+    <div class="filters">
+      <span class="filters__label">Decision</span>
+      <a class="chip" id="log-filter-all">All</a>
+      <a class="chip" id="log-filter-allow">Allowed</a>
+      <a class="chip" id="log-filter-deny">Denied</a>
+    </div>
+
+    <p class="empty" id="log-empty" hidden>No entries for this filter.</p>
+
+    <table class="table" id="log-table">
+      <thead>
+        <tr>
+          <th>Time</th><th>Action</th><th>Decision</th><th>Subject</th>
+          <th>Acting org</th><th>Bytes</th><th>Request</th>
+        </tr>
+      </thead>
+      <tbody id="log-body"></tbody>
+    </table>
+
+    <nav class="pager">
+      <a class="button button--quiet" id="log-prev">Previous</a>
+      <span class="muted" id="log-range"></span>
+      <a class="button button--quiet" id="log-next">Next</a>
+    </nav>
   </section>
 
   <section class="panel panel--problem" id="problem" hidden>

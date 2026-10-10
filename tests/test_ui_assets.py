@@ -87,12 +87,48 @@ def test_every_api_path_the_ui_calls_is_a_real_route(settings: Settings) -> None
     # `api.js` only: `session.js` calls `params.get("code")` on a URLSearchParams, which
     # the same pattern happily reads as an API path. The test below keeps that narrowing
     # honest by pinning that no other module builds a `v1/` path.
-    called = set(re.findall(r'\bget\([`"]([^`"]+)[`"]\)', (ASSETS / "api.js").read_text()))
+    api_js = (ASSETS / "api.js").read_text()
+    # `[,)]`, not `)`. The first version of this required the closing paren immediately
+    # after the string, so the day a call grew a second argument its path stopped being
+    # checked — silently, with the test still green. Found by `accessLog(tenant, params)`.
+    called = set(re.findall(r'\bget\([`"]([^`"]+)[`"]\s*[,)]', api_js))
     served = {wildcarded(path) for path in route_paths(create_public_app(settings))}
 
-    assert called, "the pattern matched nothing — this test would pass against any script"
+    # Not just "matched something": matched *every* helper. A call shape the pattern
+    # cannot read is the failure mode this test has already had once.
+    helpers = set(re.findall(r"export const (\w+) = ", api_js))
+    assert len(called) == len(helpers), (
+        f"{len(helpers)} exported helpers but {len(called)} paths matched — "
+        f"the pattern cannot read one of them: {sorted(helpers)}"
+    )
+
     unknown = {path for path in called if wildcarded(path) not in served}
     assert not unknown, f"the UI calls paths this node does not serve: {sorted(unknown)}"
+
+
+def test_every_query_parameter_the_ui_sends_is_accepted(settings: Settings) -> None:
+    """The access log's filters are the only query parameters the UI sends.
+
+    A renamed parameter is not an error anywhere: FastAPI ignores what it does not
+    declare, so a filter would simply stop filtering and the page would show everything
+    while looking like it had narrowed.
+    """
+    import inspect
+
+    from circuless_node.resources import resource_router
+
+    [route] = [r for r in resource_router().routes if r.path.endswith("/access-log")]
+    accepted = set(inspect.signature(route.endpoint).parameters)
+
+    app_js = (ASSETS / "app.js").read_text()
+    [call] = re.findall(r"api\.accessLog\(tenant, \{(.*?)\}\)", app_js, re.S)
+    # `[A-Za-z_]`, not `[a-z_]`: the first version could not match a camelCase key, so
+    # renaming `resource_id` to `resourceId` — exactly the mistake this guards — matched
+    # nothing and passed. A pattern that cannot see the error is not a test.
+    sent = set(re.findall(r"^\s*([A-Za-z_]+):", call, re.M))
+
+    assert sent, "the pattern matched nothing — this test would pass against any script"
+    assert sent <= accepted, f"the UI sends parameters the node ignores: {sorted(sent - accepted)}"
 
 
 def test_api_paths_are_built_in_one_module() -> None:
@@ -151,6 +187,65 @@ def test_the_detail_view_reads_only_fields_the_node_returns() -> None:
     assert read, "the pattern matched nothing — this test would pass against any script"
     assert read <= returned, (
         f"the detail view reads fields the node does not return: {sorted(read - returned)}"
+    )
+
+
+def test_the_decision_filter_offers_only_values_the_node_accepts() -> None:
+    """The node declares `^(allow|deny)$` and answers 422 to anything else.
+
+    The UI filters the fragment against its own allowlist before sending it, so a value
+    that drifted out of step would not 422 — it would be dropped, and the page would
+    quietly show every entry while the chip looked selected.
+    """
+    import inspect
+
+    from circuless_node.resources import resource_router
+
+    [route] = [r for r in resource_router().routes if r.path.endswith("/access-log")]
+    declared = inspect.signature(route.endpoint).parameters["decision"].default
+    # FastAPI keeps the constraint in pydantic metadata rather than on the Query itself.
+    [constraint] = [m for m in declared.metadata if hasattr(m, "pattern")]
+    pattern = re.compile(constraint.pattern)
+
+    app_js = (ASSETS / "app.js").read_text()
+    [block] = re.findall(r"const DECISIONS = \[(.*?)\];", app_js)
+    offered = re.findall(r'"([a-z]+)"', block)
+
+    assert offered, "the pattern matched nothing — this test would pass against any script"
+    for value in offered:
+        assert pattern.fullmatch(value), f"the UI offers {value!r}, which the node refuses"
+
+
+def test_the_log_view_reads_only_fields_the_node_returns() -> None:
+    """`entry_out` is the contract (N11), and the same drift applies as for resources.
+
+    A renamed field renders as an em dash or as `undefined`, which in a log reads as
+    "this entry has no subject" rather than as a bug in the page.
+    """
+    import uuid as _uuid
+
+    from circuless_node.access_log import entry_out
+    from circuless_node.models import AccessLog
+
+    returned = set(
+        entry_out(
+            AccessLog(
+                tenant_id=_uuid.uuid4(),
+                request_id="r-1",
+                action="read",
+                subject_sub="s-1",
+                principal_type="user",
+                decision="allow",
+            )
+        )
+    )
+
+    app_js = (ASSETS / "app.js").read_text()
+    read = set(re.findall(r"\bentry\.([A-Za-z_]+)", app_js))
+
+    assert read, "the pattern matched nothing — this test would pass against any script"
+    assert read <= returned, (
+        f"the log view reads fields the node does not return: {sorted(read - returned)}"
     )
 
 

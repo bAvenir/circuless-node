@@ -15,7 +15,7 @@ import { completeSignIn, forgetToken, loadConfig, redirectUri, signIn, signOut, 
 
 const el = (id) => document.getElementById(id);
 const VIEWS = ["loading", "signed-out", "tenants-view", "resources-view", "resource-view",
-  "problem"];
+  "log-view", "problem"];
 
 function show(id) {
   for (const view of VIEWS) el(view).hidden = view !== id;
@@ -133,6 +133,7 @@ async function resourcesView(tenant) {
   const body = el("resources-body");
   body.replaceChildren();
 
+  el("resources-log-link").href = `#/t/${encodeURIComponent(tenant)}/log`;
   el("resources-empty").hidden = resources.length > 0;
   el("resources-table").hidden = resources.length === 0;
   el("resources-count").textContent =
@@ -217,17 +218,130 @@ async function resourceView(tenant, id) {
     el("resource-policy-body").textContent = JSON.stringify(resource.invoke_policy, null, 2);
   }
 
+  el("resource-log-link").href =
+    `#/t/${encodeURIComponent(tenant)}/log?resource=${encodeURIComponent(resource.id)}`;
+
   show("resource-view");
+}
+
+// --- the access log --------------------------------------------------------------------
+
+const PAGE = 100;
+
+/** Only the two the node accepts; anything else is "all" (N11's filter is `allow|deny`). */
+const DECISIONS = ["allow", "deny"];
+
+async function logView(tenant, params) {
+  const offset = Math.max(0, Number.parseInt(params.get("offset") || "0", 10) || 0);
+  const resourceId = params.get("resource") || undefined;
+  const decision = DECISIONS.includes(params.get("decision")) ? params.get("decision") : undefined;
+
+  const page = await api.accessLog(tenant, {
+    limit: PAGE,
+    offset,
+    resource_id: resourceId,
+    decision,
+  });
+  const entries = page.entries;
+
+  setCrumbs([
+    { label: "Organisations", hash: "#/" },
+    { label: tenant, hash: `#/t/${encodeURIComponent(tenant)}/resources` },
+    { label: "Access log" },
+  ]);
+
+  el("log-scope").textContent = resourceId
+    ? `One resource of ${tenant}.`
+    : `Every decision about ${tenant}'s resources, newest first.`;
+
+  // The filter chips keep whatever else is in the URL, so narrowing to one resource and
+  // then to denials does not silently drop the resource.
+  const withFilter = (value) => {
+    const next = new URLSearchParams(params);
+    next.delete("offset"); // a new filter starts at the first page, not page seven
+    if (value) next.set("decision", value);
+    else next.delete("decision");
+    return `#/t/${encodeURIComponent(tenant)}/log?${next}`;
+  };
+  el("log-filter-all").href = withFilter(null);
+  el("log-filter-allow").href = withFilter("allow");
+  el("log-filter-deny").href = withFilter("deny");
+  for (const [id, value] of [["all", undefined], ["allow", "allow"], ["deny", "deny"]]) {
+    el(`log-filter-${id}`).classList.toggle("chip--on", decision === value);
+  }
+
+  const body = el("log-body");
+  body.replaceChildren();
+  el("log-empty").hidden = entries.length > 0;
+  el("log-table").hidden = entries.length === 0;
+
+  for (const entry of entries) {
+    const row = fill(body, "tr", entry.decision === "deny" ? "row--deny" : "");
+
+    fill(row, "td", "mono", entry.ts);
+
+    const action = fill(row, "td");
+    fill(action, "div", "", entry.action);
+    if (entry.resource_id) fill(action, "div", "cell__sub mono", entry.resource_id);
+
+    const decisionCell = fill(row, "td");
+    fill(decisionCell, "span", `pill pill--${entry.decision}`, entry.decision);
+    if (entry.reason) fill(decisionCell, "div", "cell__sub", entry.reason);
+
+    // A pseudonymous subject and a principal type. There is no name or email to show:
+    // a node token does not carry one (D31), which is why this column is a uuid.
+    const who = fill(row, "td");
+    fill(who, "div", "mono", entry.subject_sub || "—");
+    fill(who, "div", "cell__sub", entry.principal_type + (entry.actor ? ` · ${entry.actor}` : ""));
+
+    fill(row, "td", "", entry.acting_org || "—");
+    fill(row, "td", "", entry.bytes === null || entry.bytes === undefined ? "—" : entry.bytes);
+    fill(row, "td", "mono", entry.request_id || "—");
+  }
+
+  // The node returns no total — it is an investigation tool, not a report — so "there
+  // is a next page" is inferred from a full page having come back. A last page that is
+  // exactly full shows a Next that lands on an empty one; that is the honest cost of
+  // not making the node count rows it does not need to count.
+  const pageHref = (at) => {
+    const next = new URLSearchParams(params);
+    if (at > 0) next.set("offset", String(at));
+    else next.delete("offset");
+    return `#/t/${encodeURIComponent(tenant)}/log?${next}`;
+  };
+  const prev = el("log-prev");
+  const next = el("log-next");
+
+  prev.href = pageHref(Math.max(0, offset - PAGE));
+  prev.classList.toggle("is-disabled", offset === 0);
+  next.href = pageHref(offset + PAGE);
+  next.classList.toggle("is-disabled", entries.length < PAGE);
+
+  el("log-range").textContent = entries.length
+    ? `Entries ${offset + 1}–${offset + entries.length}`
+    : "No entries";
+
+  show("log-view");
 }
 
 // --- routing -----------------------------------------------------------------------------
 
-/** `#/t/<slug>/resources` and `#/t/<slug>/r/<id>`; anything else is the tenant list. */
+/**
+ * `#/t/<slug>/resources`, `#/t/<slug>/r/<id>`, `#/t/<slug>/log?decision=deny&offset=100`.
+ * Anything else is the tenant list.
+ *
+ * Filters live in the fragment rather than in a variable so that the back button, a
+ * reload and a pasted link all show the same thing — which, for a page whose job is to
+ * answer "what happened", is most of its value.
+ */
 function route() {
-  const parts = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean).map(decodeURIComponent);
+  const [path, query] = location.hash.replace(/^#\/?/, "").split("?");
+  const parts = path.split("/").filter(Boolean).map(decodeURIComponent);
+  const params = new URLSearchParams(query || "");
 
   if (parts[0] === "t" && parts[2] === "resources") return resourcesView(parts[1]);
   if (parts[0] === "t" && parts[2] === "r" && parts[3]) return resourceView(parts[1], parts[3]);
+  if (parts[0] === "t" && parts[2] === "log") return logView(parts[1], params);
   return tenantsView();
 }
 

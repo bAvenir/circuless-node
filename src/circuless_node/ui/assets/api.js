@@ -36,8 +36,19 @@ async function describe(response) {
   });
 }
 
-export async function get(path) {
-  const response = await fetch(`../${path}`, {
+/**
+ * `params` is separate from `path` so that the path stays a route template. A test
+ * asserts every path here is one the node actually serves, and a query string glued on
+ * would make it a string no route can match — the check would then pass by comparing
+ * nothing, which is the failure this codebase keeps finding.
+ */
+export async function get(path, params) {
+  const query = new URLSearchParams(
+    Object.entries(params || {}).filter(([, value]) => value !== undefined && value !== null),
+  );
+  const suffix = query.toString() ? `?${query}` : "";
+
+  const response = await fetch(`../${path}${suffix}`, {
     headers: { Authorization: `Bearer ${token()}` },
   });
 
@@ -56,3 +67,6 @@ export const tenants = () => get("v1/tenants");
 export const resources = (tenant) => get(`v1/t/${encodeURIComponent(tenant)}/resources`);
 export const resource = (tenant, id) =>
   get(`v1/t/${encodeURIComponent(tenant)}/resources/${encodeURIComponent(id)}`);
+
+export const accessLog = (tenant, params) =>
+  get(`v1/t/${encodeURIComponent(tenant)}/access-log`, params);

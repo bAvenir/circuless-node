@@ -258,3 +258,58 @@ h2 {
   .fields { grid-template-columns: 1fr; gap: 0 0; }
   .fields dt { margin-top: var(--cl-space-3); }
 }
+
+/* ---- links, filters and paging ---------------------------------------------------- */
+
+.link, .crumbs__link { cursor: pointer; }
+
+.filters {
+  display: flex;
+  align-items: center;
+  gap: var(--cl-space-2);
+  margin: var(--cl-space-4) 0;
+}
+
+.filters__label {
+  color: var(--cl-ink-muted);
+  font-size: var(--cl-text-sm);
+  margin-right: var(--cl-space-1);
+}
+
+.chip {
+  padding: var(--cl-space-1) var(--cl-space-3);
+  border: var(--cl-border-width) solid var(--cl-line-strong);
+  border-radius: var(--cl-radius-pill);
+  font-size: var(--cl-text-sm);
+  color: var(--cl-ink-muted);
+  cursor: pointer;
+}
+
+.chip:hover { background: var(--cl-bg-hover); }
+
+.chip--on {
+  background: var(--cl-action-bg);
+  border-color: var(--cl-action-bg);
+  color: var(--cl-action-ink);
+}
+
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--cl-space-3);
+  margin-top: var(--cl-space-5);
+}
+
+/* There is no total to count against, so "no next page" is a state the link shows
+ * rather than a link that disappears — a control that vanishes reads as a bug. */
+.is-disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+/* A denial is the row an admin opened this page to find. */
+.row--deny td { background: var(--cl-bg-sunken); }
+
+.pill--allow { background: var(--cl-bg-selected); color: var(--cl-forest); }
+.pill--deny { background: var(--cl-bg-sunken); color: var(--cl-danger); }
