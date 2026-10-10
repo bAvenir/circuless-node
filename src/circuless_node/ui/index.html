@@ -77,10 +77,89 @@
       <pre class="code" id="resource-policy-body"></pre>
     </section>
 
-    <p>
+    <section id="resource-upload" hidden>
+      <h2>Data</h2>
+      <p class="muted" id="resource-upload-hint"></p>
+      <div class="field" id="resource-object-row" hidden>
+        <label class="field__label" for="resource-object-path">Object path</label>
+        <input class="field__input" type="text" id="resource-object-path">
+        <p class="field__hint">Where inside the bucket this object goes.</p>
+      </div>
+      <input type="file" id="resource-file">
+      <button type="button" class="button" id="resource-upload-go">Upload</button>
+      <progress id="resource-progress" max="1" value="0" hidden></progress>
+      <p class="muted" id="resource-upload-status"></p>
+    </section>
+
+    <p class="actions">
       <a id="resource-log-link" class="link">Access log for this resource</a>
       <a id="resource-edit-link" class="button button--quiet">Edit metadata</a>
+      <a id="resource-credential-link" class="button button--quiet" hidden>Credential</a>
+      <button type="button" class="button button--danger" id="resource-withdraw" hidden>
+        Withdraw
+      </button>
     </p>
+
+    <!-- Not a confirm(): it cannot be styled, cannot say what withdrawal actually does,
+         and cannot ask for the slug. The wording avoids "delete" on purpose — the data
+         is still there, and will be until the purge date the node returns. -->
+    <section class="panel panel--problem" id="withdraw-confirm" hidden>
+      <h2>Withdraw this resource?</h2>
+      <p id="withdraw-explain"></p>
+      <div class="field">
+        <label class="field__label" for="withdraw-slug">Type the slug to confirm</label>
+        <input class="field__input" type="text" id="withdraw-slug" autocomplete="off">
+      </div>
+      <p class="notice notice--problem" id="withdraw-error" hidden></p>
+      <div class="form__actions">
+        <button type="button" class="button button--danger" id="withdraw-go" disabled>
+          Withdraw
+        </button>
+        <button type="button" class="button button--quiet" id="withdraw-cancel">Cancel</button>
+      </div>
+    </section>
+  </section>
+
+  <section id="credential-view" hidden>
+    <h1>Upstream credential</h1>
+    <p class="muted" id="credential-intro"></p>
+
+    <p class="notice" id="credential-current"></p>
+
+    <!-- Invariant 11: never returned by any API or UI. The node has no endpoint that
+         could show it, and this form is write-only by the same rule. -->
+    <p class="muted">
+      A credential cannot be read back once set — not here, and not through the API.
+      Rotating it replaces the stored value.
+    </p>
+
+    <p class="notice notice--problem" id="credential-error" hidden></p>
+
+    <form id="credential-form" novalidate>
+      <div class="field">
+        <label class="field__label" for="credential-scheme">Scheme *</label>
+        <select class="field__input" id="credential-scheme"></select>
+      </div>
+      <div class="field" id="credential-username-row" hidden>
+        <label class="field__label" for="credential-username">Username *</label>
+        <input class="field__input" type="text" id="credential-username" autocomplete="off">
+      </div>
+      <div class="field" id="credential-header-row" hidden>
+        <label class="field__label" for="credential-header">Header name *</label>
+        <input class="field__input" type="text" id="credential-header" autocomplete="off">
+      </div>
+      <div class="field">
+        <label class="field__label" for="credential-secret">Secret *</label>
+        <input class="field__input" type="password" id="credential-secret" autocomplete="off">
+      </div>
+      <div class="form__actions">
+        <button type="submit" class="button" id="credential-save">Set credential</button>
+        <button type="button" class="button button--danger" id="credential-remove" hidden>
+          Remove
+        </button>
+        <a class="button button--quiet" id="credential-cancel">Back</a>
+      </div>
+    </form>
   </section>
 
   <section id="form-view" hidden>

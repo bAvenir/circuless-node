@@ -361,3 +361,60 @@ textarea.field__input {
   border-left-color: var(--cl-danger);
   color: var(--cl-danger);
 }
+
+/* ---- destructive actions ----------------------------------------------------------- */
+
+/* Distinct from the primary action, and never the default-looking button on a page.
+ * Withdrawal is reversible for a while, which is why it is not the strongest red in
+ * the palette — the wording carries the warning, the colour only marks the category. */
+.button--danger {
+  background: transparent;
+  color: var(--cl-danger);
+  border-color: var(--cl-danger);
+}
+
+.button--danger:hover {
+  background: var(--cl-danger);
+  color: var(--cl-ink-inverse);
+}
+
+.button--danger:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.button--danger:disabled:hover {
+  background: transparent;
+  color: var(--cl-danger);
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: var(--cl-space-3);
+  flex-wrap: wrap;
+  margin-top: var(--cl-space-6);
+}
+
+/* ---- upload ------------------------------------------------------------------------ */
+
+#resource-upload {
+  margin-top: var(--cl-space-6);
+  padding: var(--cl-space-5);
+  background: var(--cl-bg-raised);
+  border: var(--cl-border-width) solid var(--cl-line);
+  border-radius: var(--cl-radius);
+}
+
+#resource-file {
+  font: inherit;
+  font-size: var(--cl-text-sm);
+  margin-right: var(--cl-space-3);
+}
+
+progress {
+  display: block;
+  width: 100%;
+  margin-top: var(--cl-space-4);
+  accent-color: var(--cl-accent);
+}

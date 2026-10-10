@@ -152,7 +152,7 @@ def test_the_script_reads_exactly_the_keys_the_node_writes() -> None:
     # scanning only `app.js` would quietly stop covering them.
     script = "\n".join(path.read_text() for path in sorted((UI_SOURCE / "assets").glob("*.js")))
     # Minus the filename: the same pattern matches it in `fetch("config.json")`.
-    read = set(re.findall(r"\bconfig\.([a-z_]+)", script)) - {"json"}
+    read = set(re.findall(r"\bconfig\.([A-Za-z_]+)", script)) - {"json"}
 
     assert read, "the pattern matched nothing — this test would pass against any script"
     assert read <= CONFIG_KEYS, (

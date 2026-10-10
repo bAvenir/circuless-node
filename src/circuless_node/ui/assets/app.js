@@ -16,7 +16,7 @@ import { completeSignIn, forgetToken, loadConfig, redirectUri, signIn, signOut, 
 
 const el = (id) => document.getElementById(id);
 const VIEWS = ["loading", "signed-out", "tenants-view", "resources-view", "resource-view",
-  "log-view", "form-view", "problem"];
+  "log-view", "form-view", "credential-view", "problem"];
 
 /** `capabilities.accepts_sensitive` from `/.well-known`, read once after sign-in. */
 let nodeCapabilities = {};
@@ -228,6 +228,17 @@ async function resourceView(tenant, id) {
   el("resource-edit-link").href =
     `#/t/${encodeURIComponent(tenant)}/r/${encodeURIComponent(resource.id)}/edit`;
 
+  const live = resource.status !== WITHDRAWN;
+
+  // A service's upstream credential; a dataset has none to set.
+  const credentialLink = el("resource-credential-link");
+  credentialLink.hidden = resource.kind !== "service" || !live;
+  credentialLink.href =
+    `#/t/${encodeURIComponent(tenant)}/r/${encodeURIComponent(resource.id)}/credential`;
+
+  setUpUpload(tenant, resource, live);
+  setUpWithdraw(tenant, resource, live);
+
   show("resource-view");
 }
 
@@ -329,6 +340,227 @@ async function logView(tenant, params) {
     : "No entries";
 
   show("log-view");
+}
+
+// --- uploading bytes ------------------------------------------------------------------
+
+function setUpUpload(tenant, resource, live) {
+  const panel = el("resource-upload");
+  // Only a dataset holds bytes, and only while it is still live: writing to a withdrawn
+  // resource would be writing to something scheduled for purge.
+  panel.hidden = resource.kind !== "dataset" || !live;
+  if (panel.hidden) return;
+
+  const bucket = resource.shape === "bucket";
+  el("resource-object-row").hidden = !bucket;
+  el("resource-upload-hint").textContent = bucket
+    ? "Each object is uploaded and decided separately."
+    : "Uploading replaces this resource's bytes.";
+
+  const file = el("resource-file");
+  const status = el("resource-upload-status");
+  const bar = el("resource-progress");
+  const go = el("resource-upload-go");
+
+  file.value = "";
+  status.textContent = "";
+  bar.hidden = true;
+
+  go.onclick = async () => {
+    const chosen = file.files[0];
+    if (!chosen) {
+      status.textContent = "Choose a file first.";
+      return;
+    }
+    const objectPath = bucket ? el("resource-object-path").value.trim() : "";
+    if (bucket && !objectPath) {
+      status.textContent = "A bucket object needs a path.";
+      return;
+    }
+
+    go.disabled = true;
+    bar.hidden = false;
+    bar.removeAttribute("value"); // indeterminate until the first progress event
+    status.textContent = `Uploading ${chosen.name}…`;
+
+    try {
+      const result = await api.upload(
+        api.uploadPath(tenant, resource.id, objectPath),
+        chosen,
+        (fraction) => {
+          if (fraction === null) bar.removeAttribute("value");
+          else bar.value = fraction;
+        },
+      );
+      status.textContent = `Stored ${result.bytes} bytes at ${result.path}.`;
+      bar.hidden = true;
+      file.value = "";
+    } catch (error) {
+      bar.hidden = true;
+      if (error instanceof NotSignedIn) {
+        show("signed-out");
+        return;
+      }
+      status.textContent = error instanceof Refused
+        ? `${error.detail} (${error.reason})`
+        : String(error.message || error);
+    } finally {
+      go.disabled = false;
+    }
+  };
+}
+
+// --- withdrawing -----------------------------------------------------------------------
+
+function setUpWithdraw(tenant, resource, live) {
+  const button = el("resource-withdraw");
+  const confirm = el("withdraw-confirm");
+  const typed = el("withdraw-slug");
+  const go = el("withdraw-go");
+  const error = el("withdraw-error");
+
+  button.hidden = !live;
+  confirm.hidden = true;
+  error.hidden = true;
+  typed.value = "";
+  go.disabled = true;
+
+  el("withdraw-explain").textContent =
+    `Consumers lose access immediately and the catalogue record is withdrawn. The data `
+    + `is not removed at once — the node keeps it until its purge date so a mistake can `
+    + `be undone, and access log entries are kept either way.`;
+
+  button.onclick = () => {
+    confirm.hidden = false;
+    typed.focus();
+  };
+  el("withdraw-cancel").onclick = () => {
+    confirm.hidden = true;
+  };
+
+  // Typing the slug, not a bare confirmation: the point is to make someone read which
+  // resource this is while a list of similarly named ones is a click away.
+  typed.oninput = () => {
+    go.disabled = typed.value.trim() !== resource.slug;
+  };
+
+  go.onclick = async () => {
+    go.disabled = true;
+    error.hidden = true;
+    try {
+      await api.withdrawResource(tenant, resource.id);
+      await render();
+    } catch (failure) {
+      if (failure instanceof NotSignedIn) {
+        show("signed-out");
+        return;
+      }
+      error.textContent = failure instanceof Refused
+        ? `${failure.detail} (${failure.reason})`
+        : String(failure.message || failure);
+      error.hidden = false;
+      go.disabled = false;
+    }
+  };
+}
+
+// --- the upstream credential ---------------------------------------------------------
+
+/** `header` needs a header name, `basic` needs a username, `bearer` needs neither. */
+const SCHEMES = ["bearer", "header", "basic"];
+
+async function credentialView(tenant, resourceId) {
+  const resource = await api.resource(tenant, resourceId);
+  const backTo = `#/t/${encodeURIComponent(tenant)}/r/${encodeURIComponent(resourceId)}`;
+
+  setCrumbs([
+    { label: "Organisations", hash: "#/" },
+    { label: tenant, hash: `#/t/${encodeURIComponent(tenant)}/resources` },
+    { label: resource.slug, hash: backTo },
+    { label: "Credential" },
+  ]);
+
+  el("credential-intro").textContent =
+    `What the node sends upstream when it forwards a call to ${resource.slug}.`;
+  el("credential-cancel").href = backTo;
+  el("credential-error").hidden = true;
+  el("credential-secret").value = "";
+
+  // 404 is the ordinary answer here — it means none is set — so it is read as state
+  // rather than reported as a failure.
+  let current = null;
+  try {
+    current = await api.credential(tenant, resourceId);
+  } catch (error) {
+    if (error instanceof NotSignedIn) {
+      show("signed-out");
+      return;
+    }
+    if (!(error instanceof Refused) || error.status !== 404) throw error;
+  }
+
+  el("credential-current").textContent = current
+    ? `A ${current.scheme} credential is set`
+      + (current.header_name ? ` on ${current.header_name}` : "")
+      + `, last updated ${current.updated_at}.`
+    : "No credential is set. The node forwards calls to this service unauthenticated.";
+  el("credential-remove").hidden = !current;
+  el("credential-save").textContent = current ? "Rotate credential" : "Set credential";
+
+  const scheme = el("credential-scheme");
+  scheme.replaceChildren();
+  for (const name of SCHEMES) {
+    const option = fill(scheme, "option", "", name);
+    option.value = name;
+  }
+  scheme.value = current ? current.scheme : "bearer";
+
+  // Structural, like the resource form: the node refuses a username on a bearer and a
+  // header name on a basic, so neither is offered where it does not belong.
+  const showForScheme = () => {
+    el("credential-username-row").hidden = scheme.value !== "basic";
+    el("credential-header-row").hidden = scheme.value !== "header";
+  };
+  scheme.onchange = showForScheme;
+  showForScheme();
+
+  show("credential-view");
+
+  el("credential-form").onsubmit = async (event) => {
+    event.preventDefault();
+    el("credential-error").hidden = true;
+    el("credential-save").disabled = true;
+
+    const body = { scheme: scheme.value, secret: el("credential-secret").value };
+    if (scheme.value === "basic") body.username = el("credential-username").value.trim();
+    if (scheme.value === "header") body.header_name = el("credential-header").value.trim();
+
+    try {
+      await api.setCredential(tenant, resourceId, body);
+      location.assign(backTo);
+    } catch (error) {
+      if (error instanceof NotSignedIn) {
+        show("signed-out");
+        return;
+      }
+      el("credential-error").textContent = error instanceof Refused
+        ? `${error.detail} (${error.reason})`
+        : String(error.message || error);
+      el("credential-error").hidden = false;
+    } finally {
+      el("credential-save").disabled = false;
+    }
+  };
+
+  el("credential-remove").onclick = async () => {
+    try {
+      await api.removeCredential(tenant, resourceId);
+      await render();
+    } catch (error) {
+      el("credential-error").textContent = error instanceof Refused ? error.detail : String(error);
+      el("credential-error").hidden = false;
+    }
+  };
 }
 
 // --- the resource form -------------------------------------------------------------------
@@ -515,6 +747,9 @@ function route() {
   if (parts[0] === "t" && parts[2] === "new") return formView(parts[1], null);
   if (parts[0] === "t" && parts[2] === "r" && parts[4] === "edit") {
     return formView(parts[1], parts[3]);
+  }
+  if (parts[0] === "t" && parts[2] === "r" && parts[4] === "credential") {
+    return credentialView(parts[1], parts[3]);
   }
   return tenantsView();
 }

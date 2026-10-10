@@ -83,6 +83,62 @@ async function send(method, path, body) {
   throw await describe(response);
 }
 
+/**
+ * Upload, which is the one call that cannot use `fetch`.
+ *
+ * `fetch` reports no progress without plumbing a stream through a reader, and the
+ * default limit here is a gibibyte — a form that sits silent for that long reads as
+ * broken. XHR gives `upload.onprogress` for about twenty lines, and no build step.
+ *
+ * `onProgress` is called with a fraction, or with null when the browser cannot tell.
+ */
+export function upload(path, file, onProgress) {
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open("PUT", `../${path}`);
+    request.setRequestHeader("Authorization", `Bearer ${token()}`);
+    if (file.type) request.setRequestHeader("Content-Type", file.type);
+
+    request.upload.onprogress = (event) =>
+      onProgress(event.lengthComputable ? event.loaded / event.total : null);
+
+    request.onload = () => {
+      if (request.status === 401) {
+        forgetToken();
+        reject(new NotSignedIn());
+        return;
+      }
+      if (request.status >= 200 && request.status < 300) {
+        resolve(JSON.parse(request.responseText || "null"));
+        return;
+      }
+      let body = {};
+      try {
+        body = JSON.parse(request.responseText);
+      } catch {
+        // Same fallback as `describe`: a gateway in front of the node can answer HTML.
+      }
+      reject(new Refused({
+        reason: body.reason || `http_${request.status}`,
+        detail: body.detail || `The node answered ${request.status}.`,
+        requestId: request.getResponseHeader(REQUEST_ID_HEADER),
+        status: request.status,
+      }));
+    };
+
+    // A dropped connection mid-upload. Distinguished from a refusal because the advice
+    // differs: this one is worth simply trying again.
+    request.onerror = () =>
+      reject(new Refused({
+        reason: "network_error",
+        detail: "The upload did not reach the node. Check the connection and try again.",
+        status: 0,
+      }));
+
+    request.send(file);
+  });
+}
+
 export const whoami = () => get("v1/whoami");
 export const nodeDocument = () => get(".well-known/circuless-node");
 export const tenants = () => get("v1/tenants");
@@ -92,6 +148,25 @@ export const resource = (tenant, id) =>
 
 export const accessLog = (tenant, params) =>
   get(`v1/t/${encodeURIComponent(tenant)}/access-log`, params);
+
+export const credential = (tenant, id) =>
+  get(`v1/t/${encodeURIComponent(tenant)}/resources/${encodeURIComponent(id)}/credential`);
+
+export const setCredential = (tenant, id, body) =>
+  send("PUT", `v1/t/${encodeURIComponent(tenant)}/resources/${encodeURIComponent(id)}/credential`,
+    body);
+
+export const removeCredential = (tenant, id) =>
+  send("DELETE",
+    `v1/t/${encodeURIComponent(tenant)}/resources/${encodeURIComponent(id)}/credential`);
+
+export const withdrawResource = (tenant, id) =>
+  send("DELETE", `v1/t/${encodeURIComponent(tenant)}/resources/${encodeURIComponent(id)}`);
+
+/** `shape=file` takes the whole resource; `shape=bucket` takes one object by path. */
+export const uploadPath = (tenant, id, objectPath) =>
+  `v1/t/${encodeURIComponent(tenant)}/resources/${encodeURIComponent(id)}/data`
+  + (objectPath ? `/${objectPath.split("/").map(encodeURIComponent).join("/")}` : "");
 
 export const createResource = (tenant, body) =>
   send("POST", `v1/t/${encodeURIComponent(tenant)}/resources`, body);

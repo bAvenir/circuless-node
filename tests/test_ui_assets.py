@@ -108,6 +108,14 @@ def test_the_helpers_are_all_found() -> None:
         "accessLog",
         "createResource",
         "patchResource",
+        "credential",
+        "setCredential",
+        "removeCredential",
+        "withdrawResource",
+        # A path builder rather than a call: `upload` takes a path, so it has none of
+        # its own and is checked through this one. Its bucket form appends an object
+        # path to this base, which no route template can express.
+        "uploadPath",
     }
 
 
@@ -203,8 +211,11 @@ def test_the_detail_view_reads_only_fields_the_node_returns() -> None:
 
     app_js = (ASSETS / "app.js").read_text()
     [block] = re.findall(r"const FIELDS = \[(.*?)\n\];", app_js, re.S)
-    read = set(re.findall(r"\(r\) => r\.([a-z_]+)", block))
-    read |= set(re.findall(r"\bresource\.([a-z_]+)", app_js))
+    # `[A-Za-z_]`, never `[a-z_]`: a camelCase rename is the exact mistake these guard,
+    # and a lowercase-only class cannot match one — so the test would capture nothing
+    # and pass. Found twice before this was applied everywhere.
+    read = set(re.findall(r"\(r\) => r\.([A-Za-z_]+)", block))
+    read |= set(re.findall(r"\bresource\.([A-Za-z_]+)", app_js))
 
     assert read, "the pattern matched nothing — this test would pass against any script"
     assert read <= returned, (
@@ -277,7 +288,12 @@ def test_the_ui_calls_nothing_outside_v1_and_the_identity_provider() -> None:
     A fetch to anywhere else would be an outbound request from a node that may be on a
     partner's premises, which design.md rules out.
     """
+    # `.open(` as well as `fetch(`: the upload uses XHR for its progress events, and
+    # a second way of reaching the network this test did not know about would be a
+    # hole in it. Added when `api.upload` was.
     targets = re.findall(r"fetch\(\s*[`\"']([^`\"']*)", all_script_text())
+    targets += re.findall(r"\.open\(\s*\"[A-Z]+\",\s*[`\"']([^`\"']*)", all_script_text())
+    assert targets, "the pattern matched nothing — this test would pass against any script"
     for target in targets:
         assert (
             target.startswith("../")
@@ -478,3 +494,79 @@ def test_the_kind_split_matches_what_the_node_refuses() -> None:
         extra = {"endpoint_url": "https://upstream.example"} if kind == "service" else {}
         with pytest.raises(pydantic.ValidationError):
             ResourceIn(slug="x", kind=kind, **base, **extra, **{hidden: value})
+
+
+# --- the credential form ----------------------------------------------------------------
+
+
+def test_the_credential_form_offers_exactly_the_node_s_schemes() -> None:
+    from circuless_node.credentials import Scheme
+
+    app_js = (ASSETS / "app.js").read_text()
+    [block] = re.findall(r"const SCHEMES = \[(.*?)\];", app_js)
+    offered = re.findall(r'"([a-z]+)"', block)
+
+    assert offered, "the pattern matched nothing — this test would pass against any script"
+    assert offered == [member.value for member in Scheme]
+
+
+def test_the_credential_form_sends_only_fields_the_node_accepts() -> None:
+    """`CredentialIn` is the contract; a key it does not declare is silently dropped."""
+    from circuless_node.credentials import CredentialIn
+
+    app_js = (ASSETS / "app.js").read_text()
+    sent = set(re.findall(r"\bbody\.([A-Za-z_]+) =", app_js))
+    sent |= set(re.findall(r"const body = \{ ([A-Za-z_]+):", app_js))
+
+    assert sent, "the pattern matched nothing — this test would pass against any script"
+    assert sent <= set(CredentialIn.model_fields), (
+        f"the credential form sends fields the node ignores: "
+        f"{sorted(sent - set(CredentialIn.model_fields))}"
+    )
+
+
+def test_the_scheme_dependent_fields_match_what_the_node_requires() -> None:
+    """`header` needs a header name, `basic` needs a username, `bearer` needs neither.
+
+    Structural, like the resource form's kind split: the node refuses a username on a
+    bearer outright, so the form does not offer one. Pinned against the handler's own
+    text because the rule lives there rather than in the model.
+    """
+    handler = (UI_SOURCE.parents[0] / "credentials.py").read_text()
+    assert "scheme 'header' needs a header_name" in handler
+    assert "scheme 'basic' needs a username" in handler
+
+    app_js = (ASSETS / "app.js").read_text()
+    assert 'el("credential-username-row").hidden = scheme.value !== "basic"' in app_js
+    assert 'el("credential-header-row").hidden = scheme.value !== "header"' in app_js
+
+
+# --- upload -------------------------------------------------------------------------------
+
+
+def test_both_data_routes_the_upload_can_reach_are_served(settings: Settings) -> None:
+    """`uploadPath` appends an object path for a bucket, which no route template can
+    express — so the helper test checks the file form and this checks both."""
+    served = route_paths(create_public_app(settings))
+
+    assert "/v1/t/{tenant_slug}/resources/{resource_id}/data" in served
+    assert "/v1/t/{tenant_slug}/resources/{resource_id}/data/{object_path:path}" in served
+
+
+def test_the_upload_result_is_read_with_the_keys_the_node_returns() -> None:
+    """`_store` returns `{bytes, path}`; the status line quotes both back."""
+    upload_py = (UI_SOURCE.parents[0] / "upload.py").read_text()
+    [returned] = re.findall(r'return \{"bytes": written, "path": ([^}]+)\}', upload_py)
+    assert returned, "upload.py's return shape changed; this test can no longer read it"
+
+    app_js = (ASSETS / "app.js").read_text()
+    read = set(re.findall(r"\bresult\.([A-Za-z_]+)", app_js))
+    assert read == {"bytes", "path"}, read
+
+
+def test_the_upload_sends_its_bytes_by_put() -> None:
+    """A POST would create nothing: the data routes are PUT, and a wrong method is a
+    405 the UI would report as an unexplained refusal."""
+    api_js = (ASSETS / "api.js").read_text()
+    [method] = re.findall(r'request\.open\("([A-Z]+)"', api_js)
+    assert method == "PUT"
