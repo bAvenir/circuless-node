@@ -14,20 +14,22 @@
 <body>
 
 <header class="bar">
-  <img class="bar__logo" src="assets/circuless-logo.svg" alt="CIRCULess">
+  <a class="bar__home" href="#/"><img class="bar__logo" src="assets/circuless-logo.svg" alt="CIRCULess"></a>
   <span class="bar__node" id="node-name" hidden></span>
   <div class="bar__spacer"></div>
   <span class="bar__who" id="who" hidden></span>
   <button type="button" id="sign-out" class="button button--quiet" hidden>Sign out</button>
 </header>
 
-<main id="main">
+<nav class="crumbs" id="crumbs" hidden></nav>
+
+<main>
 
   <!-- Nothing is known before config.json and the token exchange have resolved. Showing
-       a signed-out state first would make a page reload flash "sign in" at someone who
-       is signed in, which reads as having been logged out. -->
+       a signed-out state first would flash "sign in" at someone who is signed in, which
+       reads as having been logged out. -->
   <section class="panel" id="loading">
-    <p class="muted">Starting…</p>
+    <p class="muted">Loading…</p>
   </section>
 
   <section class="panel" id="signed-out" hidden>
@@ -36,10 +38,40 @@
     <button type="button" id="sign-in" class="button">Sign in</button>
   </section>
 
-  <section id="signed-in" hidden>
+  <section id="tenants-view" hidden>
     <h1>Your organisations on this node</h1>
     <p class="muted" id="tenants-intro"></p>
     <ul class="tenants" id="tenants"></ul>
+  </section>
+
+  <section id="resources-view" hidden>
+    <h1 id="resources-title"></h1>
+    <p class="muted" id="resources-count"></p>
+
+    <p class="empty" id="resources-empty" hidden>
+      This organisation has registered nothing on this node yet.
+    </p>
+
+    <table class="table" id="resources-table">
+      <thead>
+        <tr><th>Resource</th><th>Kind</th><th>Shape</th><th>Visibility</th><th>Status</th></tr>
+      </thead>
+      <tbody id="resources-body"></tbody>
+    </table>
+  </section>
+
+  <section id="resource-view" hidden>
+    <h1 id="resource-slug"></h1>
+    <p class="muted mono" id="resource-id"></p>
+
+    <p class="notice notice--withdrawn" id="resource-withdrawn" hidden></p>
+
+    <dl class="fields" id="resource-fields"></dl>
+
+    <section id="resource-policy" hidden>
+      <h2>Invoke policy</h2>
+      <pre class="code" id="resource-policy-body"></pre>
+    </section>
   </section>
 
   <section class="panel panel--problem" id="problem" hidden>

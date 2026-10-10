@@ -148,7 +148,9 @@ def test_the_script_reads_exactly_the_keys_the_node_writes() -> None:
     """
     import re
 
-    script = (UI_SOURCE / "assets" / "app.js").read_text()
+    # Every module: `session.js` reads most of these now that sign-in moved there, and
+    # scanning only `app.js` would quietly stop covering them.
+    script = "\n".join(path.read_text() for path in sorted((UI_SOURCE / "assets").glob("*.js")))
     # Minus the filename: the same pattern matches it in `fetch("config.json")`.
     read = set(re.findall(r"\bconfig\.([a-z_]+)", script)) - {"json"}
 
