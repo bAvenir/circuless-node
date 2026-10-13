@@ -161,3 +161,16 @@ token verification and Cloud API calls go over the public internet.
 The server side — groups, single-use keys, default-deny access rules, and keeping the
 platform's own routes and DNS away from CIRCULess peers — is in the `circuless-cloud`
 repository at `deploy/netbird/POLICIES.md`.
+
+The operator's step-by-step for the whole enrolment, which interleaves with this guide,
+is `circuless-cloud/deploy/DEPLOYMENT.md` under *Adding a node, end to end*. Two things
+from it are worth knowing on this side:
+
+**The address the operator needs is your overlay address**, `http://100.x.y.z:8000` —
+what step 5 below prints. Not a public hostname. The gateway reaches you over the
+overlay and terminates TLS itself, so this hop is plain HTTP inside WireGuard (D28).
+
+**`CIRCULESS_NODE_CORS_ALLOW_ORIGINS` must contain `https://api.circuless.bavenir.eu`**,
+the management console's origin — the host alone, no path and no trailing slash. Get it
+wrong and browser downloads fail the CORS preflight before any token is checked, with a
+200 in every log on this machine.
