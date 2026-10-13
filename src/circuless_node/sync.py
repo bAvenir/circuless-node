@@ -365,8 +365,72 @@ def pull_sync_feed(session: Session, cloud: CloudTransport, *, now: dt.datetime)
                 synced_at=now,
             )
         )
+    adopt_hosted_tenants(session, feed)
+
     session.commit()
     return len(agreements)
+
+
+def adopt_hosted_tenants(session: Session, feed: dict[str, Any]) -> list[str]:
+    """Create a `Tenant` row for every organisation the Cloud says this node hosts.
+
+    The registry is the only place that knows which tenants a node serves — an operator
+    sets it with `PUT /v1/nodes/{uuid}/tenants`, and the Cloud refuses a catalogue push
+    for anything not in it (invariant 5). Until the feed carried `hosted`, that fact had
+    to reach the node some other way, and the only way was somebody opening a shell and
+    inserting the row by hand: the same thing declared in two places, one of which
+    nobody could query.
+
+    `org_id` and `group_path` come from the same feed's `org_map`, so the row is built
+    from the registry rather than invented. The hand-made ones carried a random
+    `org_id`, which was harmless only because nothing authorises on it.
+
+    **Create only.** Three reasons not to go further:
+
+    * *Never delete.* Dropping an organisation from `hosted` stops its agreements and
+      refuses its pushes. The tenant's data and its access log are on this node, and a
+      sync pass is not where either disappears — the same reasoning as D25's two-stage
+      deletion.
+    * *Never update.* An existing row is left exactly as it is, stale `org_id` and all.
+      Rewriting rows during a sync is not something a sync should do, and nothing reads
+      that column.
+    * *Never guess.* A hosted slug missing from `org_map` is skipped rather than given a
+      made-up organisation.
+
+    Returns the slugs created, for the caller to report.
+    """
+    hosted = [slug for slug in feed.get("hosted", []) if isinstance(slug, str)]
+    if not hosted:
+        return []
+
+    orgs = {entry["slug"]: entry for entry in feed.get("org_map", [])}
+
+    # `slug`, `org_id` and `group_path` are each unique, so a clash on any one of them
+    # is a row that already stands for this organisation under another spelling.
+    existing = session.exec(select(Tenant)).all()
+    known_slugs = {tenant.slug for tenant in existing}
+    known_orgs = {tenant.org_id for tenant in existing}
+    known_paths = {tenant.group_path for tenant in existing}
+
+    created: list[str] = []
+    for slug in hosted:
+        if slug in known_slugs:
+            continue
+        org = orgs.get(slug)
+        if org is None:
+            continue
+        org_id = uuid.UUID(str(org["org_id"]))
+        group_path = str(org["group_path"])
+        if org_id in known_orgs or group_path in known_paths:
+            continue
+
+        session.add(Tenant(org_id=org_id, group_path=group_path, slug=slug))
+        known_slugs.add(slug)
+        known_orgs.add(org_id)
+        known_paths.add(group_path)
+        created.append(slug)
+
+    return created
 
 
 def _parse_time(value: str) -> dt.datetime:

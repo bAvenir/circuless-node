@@ -680,3 +680,102 @@ async def test_the_loop_records_an_unexpected_error_rather_than_dying(tmp_path) 
 
     assert state.consecutive_pull_failures >= 2
     assert "sync loop" in (state.last_pull_error or "")
+
+
+# --- tenants provision themselves from the feed -------------------------------------------
+
+
+def feed_with(hosted: list[str], orgs: list[str] | None = None) -> dict:
+    """A sync feed as the Cloud builds it: `hosted` names the tenants, `org_map` carries
+    what a tenant row is made of."""
+    return {
+        "hosted": hosted,
+        "org_map": [
+            {
+                "slug": slug,
+                "org_id": str(uuid.uuid5(uuid.NAMESPACE_DNS, slug)),
+                "group_path": f"/orgs/{slug}",
+                "display_name": slug,
+            }
+            for slug in (orgs if orgs is not None else hosted)
+        ],
+        "agreements": [],
+    }
+
+
+def tenants(session: Session) -> set[str]:
+    return {tenant.slug for tenant in session.exec(select(Tenant)).all()}
+
+
+def test_a_node_creates_the_tenants_the_cloud_says_it_hosts(session: Session) -> None:
+    """The whole point. An operator sets the hosted list in the registry and the node
+    serves it within one pass — rather than someone opening a shell on the node and
+    inserting the row the registry already holds."""
+    cloud = FakeCloud(feed_with(["alpha", "delta"]))
+    sync.pull_sync_feed(session, cloud, now=NOW)
+
+    assert "delta" in tenants(session)
+
+
+def test_the_row_is_built_from_the_registry_and_not_invented(session: Session) -> None:
+    """`org_id` and `group_path` come from the feed. The hand-made rows this replaces
+    carried a random `org_id`, harmless only because nothing authorises on it."""
+    feed = feed_with(["delta"])
+    sync.pull_sync_feed(session, FakeCloud(feed), now=NOW)
+
+    [created] = [t for t in session.exec(select(Tenant)).all() if t.slug == "delta"]
+    assert str(created.org_id) == feed["org_map"][0]["org_id"]
+    assert created.group_path == "/orgs/delta"
+
+
+def test_a_tenant_removed_from_the_feed_is_not_deleted(session: Session) -> None:
+    """**The one that matters.** This node holds that tenant's data and its access log.
+    Dropping it from the registry stops its agreements and refuses its pushes; a sync
+    pass is not where a tenant's rows disappear (D25's reasoning)."""
+    sync.pull_sync_feed(session, FakeCloud(feed_with(["alpha", "delta"])), now=NOW)
+    assert "delta" in tenants(session)
+
+    sync.pull_sync_feed(session, FakeCloud(feed_with(["alpha"], orgs=["alpha", "delta"])), now=NOW)
+
+    assert "delta" in tenants(session), "a tenant vanished because a feed stopped mentioning it"
+
+
+def test_an_existing_tenant_is_left_exactly_as_it_is(session: Session) -> None:
+    """Including a stale `org_id` from the hand-made era. Rewriting rows during a sync
+    is not something a sync should do, and nothing reads that column."""
+    before = session.exec(select(Tenant).where(Tenant.slug == "alpha")).one()
+    original = before.org_id
+
+    sync.pull_sync_feed(session, FakeCloud(feed_with(["alpha"])), now=NOW)
+
+    after = session.exec(select(Tenant).where(Tenant.slug == "alpha")).one()
+    assert after.org_id == original
+    assert after.id == before.id
+
+
+def test_running_twice_creates_one_tenant(session: Session) -> None:
+    """Every 30 seconds, forever. `slug`, `org_id` and `group_path` are each unique, so
+    a second insert is an IntegrityError rather than a duplicate — which would take the
+    sync loop down with it."""
+    for _ in range(3):
+        sync.pull_sync_feed(session, FakeCloud(feed_with(["alpha", "delta"])), now=NOW)
+
+    assert len(session.exec(select(Tenant).where(Tenant.slug == "delta")).all()) == 1
+
+
+def test_a_hosted_slug_the_org_map_does_not_describe_is_skipped(session: Session) -> None:
+    """No `group_path`, no row — and `group_path` is what ownership is parsed from, so
+    a guessed one would be a tenant nobody can administer."""
+    feed = feed_with(["delta"], orgs=[])
+    sync.pull_sync_feed(session, FakeCloud(feed), now=NOW)
+
+    assert "delta" not in tenants(session)
+
+
+def test_a_feed_without_hosted_changes_nothing(session: Session) -> None:
+    """An older Cloud, or one that stops sending it. The node keeps what it has rather
+    than concluding it hosts nothing."""
+    before = tenants(session)
+    sync.pull_sync_feed(session, FakeCloud({"org_map": [], "agreements": []}), now=NOW)
+
+    assert tenants(session) == before

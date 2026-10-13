@@ -73,6 +73,13 @@ here to put in a password manager.
 
 ## 5. Check
 
+> **Tenants arrive on their own.** The operator says which organisations this node hosts
+> and the node creates them from the sync feed, within 30 s. `circuless-node tenants`
+> lists them; it reads the local database, so it works before the node can reach
+> anything.
+
+
+
 ```sh
 docker compose exec node circuless-node check
 ```

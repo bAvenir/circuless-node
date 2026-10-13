@@ -3,6 +3,7 @@
     circuless-node                 run the node
     circuless-node certificate     print this node's certificate, for registration
     circuless-node check           confirm the node can authenticate to the Cloud
+    circuless-node tenants         list the organisations this node serves
     circuless-node purge           run one purge pass now (N20), instead of waiting
 
 Shipped as a container image, pinned by digest and signed with cosign (O18, N15). A
@@ -129,6 +130,43 @@ def _purge_command(settings: Settings) -> int:
     return 0
 
 
+def _tenants_command(settings: Settings) -> int:
+    """Which organisations does this node serve?
+
+    Read-only, and needs no token — which is the point. During an install the question
+    is "why is this not working", and until now answering it meant minting a
+    node-audienced token to call `GET /v1/tenants`, on a node that may not be
+    authenticating yet. This reads the database.
+
+    Tenants arrive from the Cloud: the registry says which organisations a node hosts
+    and the sync feed carries that list, so a node creates them on its own within one
+    pass. An empty list on a node that should have tenants is therefore a question
+    about the *registry* or about sync, not about this node — so say that, rather than
+    printing nothing and leaving the reader to guess which of the two it is.
+    """
+    from sqlmodel import Session, select
+
+    from .db import create_db_engine
+    from .models import Tenant
+
+    with Session(create_db_engine(settings)) as session:
+        rows = session.exec(select(Tenant).order_by(Tenant.slug)).all()
+
+    for tenant in rows:
+        print(f"{tenant.slug}\t{tenant.group_path}\t{tenant.org_id}")
+
+    if not rows:
+        print(
+            "no tenants.\n"
+            "  They come from the Cloud, not from this machine: an operator sets them with\n"
+            "  PUT /v1/nodes/<node_uuid>/tenants and this node adopts them on its next sync\n"
+            "  pass, within 30 s. If they are set and nothing appears here, the sync is the\n"
+            "  thing to look at — `circuless-node check`.",
+            file=sys.stderr,
+        )
+    return 0
+
+
 def _check_command(settings: Settings) -> int:
     """Is this node working? One command, because during an install it is the question.
 
@@ -188,7 +226,7 @@ def main() -> int:
         "command",
         nargs="?",
         default="serve",
-        choices=["serve", "certificate", "check", "purge"],
+        choices=["serve", "certificate", "check", "purge", "tenants"],
     )
     args = parser.parse_args()
     settings = get_settings()
@@ -198,6 +236,7 @@ def main() -> int:
         "certificate": _certificate_command,
         "check": _check_command,
         "purge": _purge_command,
+        "tenants": _tenants_command,
     }[args.command]
 
     try:

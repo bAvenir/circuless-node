@@ -285,6 +285,16 @@ in the admin UI under `/ui`, which the Cloud gateway does not route and which a 
 from another organisation could not use. A field pointing somewhere nobody can go is
 worse than an absent one.
 
+**Tenants come from the Cloud, not from this machine.** The registry says which
+organisations a node hosts — an operator sets it, and invariant 5 refuses a catalogue
+push for anything not in it — and the sync feed carries that list, so the node creates
+any tenant it is missing on its next pass. `org_id` and `group_path` come from the same
+feed rather than being invented locally.
+
+Create only: an organisation dropped from the list stops syncing and cannot push, but
+nothing on the node is deleted. Its data and its access log are here, and a sync pass is
+not where either disappears.
+
 **Changes mark, they do not push.** Registering sets a row in `catalogue_push` and
 returns; N7's loop sends the tenant's catalogue and clears it. Pushing inside the request
 would make registration fail whenever the Cloud is unreachable, turning a control-plane
