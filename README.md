@@ -275,9 +275,15 @@ governs who may *read or invoke* it, and `decide()` (N6) owns it. A resource lis
 publicly and readable only under an agreement is the normal case.
 
 **A service is a `dcat:DataService`**, not a Dataset with a URL in it (R15) — with
-`endpointURL`, `endpointDescription` and `landingPage`. The `endpointURL` published is the
-node's own `/invoke` path: a consumer who learned the real upstream address could go round
-the node, past `decide()`, past the agreement check and past the log.
+`endpointURL` and `endpointDescription`. The `endpointURL` published is the node's own
+`/invoke` path: a consumer who learned the real upstream address could go round the node,
+past `decide()`, past the agreement check and past the log.
+
+**`dcat:landingPage` is omitted**, although R15 lists it. A landing page is one a reader
+can navigate to, and this node has none to offer: the only per-resource page it serves is
+in the admin UI under `/ui`, which the Cloud gateway does not route and which a consumer
+from another organisation could not use. A field pointing somewhere nobody can go is
+worse than an absent one.
 
 **Changes mark, they do not push.** Registering sets a row in `catalogue_push` and
 returns; N7's loop sends the tenant's catalogue and clears it. Pushing inside the request

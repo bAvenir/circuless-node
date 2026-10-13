@@ -8,8 +8,15 @@ arbitrary provider JSON-LD there.
 Two shapes, and the distinction is a review finding (R15):
 
 * a **dataset** is a `dcat:Dataset` with a `dcat:Distribution` carrying `accessURL`;
-* a **service** is a `dcat:DataService` with `endpointURL`, `endpointDescription` and
-  `landingPage` — *not* a Dataset with a URL in it, which is what an earlier draft had.
+* a **service** is a `dcat:DataService` with `endpointURL` and `endpointDescription` —
+  *not* a Dataset with a URL in it, which is what an earlier draft had.
+
+`dcat:landingPage` is **not published**, although R15 lists it. DCAT says a landing page
+is one you can navigate to, and this node has none to offer a consumer: its only
+per-resource page is in the admin UI under `/ui`, which the Cloud gateway does not route
+(it publishes `/v1` and nothing else, invariant 17) and which a consumer from another
+organisation could not use anyway. The field was briefly the `@id` and then that page;
+both were somewhere a reader could not go. Omitting it says what is true.
 
 Every record carries `dct:license` and a `dcat:theme` from the value-chain vocabulary.
 
@@ -93,17 +100,6 @@ def invoke_url(base_url: str, tenant_slug: str, resource_id) -> str:  # noqa: AN
     return f"{base_url.rstrip('/')}{resource_path(tenant_slug, resource_id)}/invoke"
 
 
-def landing_page(base_url: str, tenant_slug: str, resource_id) -> str:  # noqa: ANN001
-    """The node's own page for this resource.
-
-    DCAT says `landingPage` is a page you can navigate to. This used to be the `@id`,
-    which is not a page and not navigable — the one place the identifier was published
-    as an address outright. The node's admin UI does have a page per resource, at a
-    fragment under the `/ui` mount, so this points there.
-    """
-    return f"{base_url.rstrip('/')}/ui/#/t/{tenant_slug}/r/{resource_id}"
-
-
 def render(
     resource: Resource, *, node_id: str, tenant_slug: str, base_url: str | None = None
 ) -> dict[str, Any]:
@@ -161,7 +157,6 @@ def render(
             # The node's /invoke path, never `resource.endpoint_url` — see the module
             # docstring.
             record["dcat:endpointURL"] = invoke_url(reachable_at, tenant_slug, resource.id)
-            record["dcat:landingPage"] = landing_page(reachable_at, tenant_slug, resource.id)
         # Independent of the node's address: it is the provider's own document.
         if resource.openapi_ref:
             record["dcat:endpointDescription"] = resource.openapi_ref

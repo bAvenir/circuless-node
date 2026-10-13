@@ -12,11 +12,12 @@ a browser following the record went somewhere nothing answered.
 **The path was wrong.** It omitted `/v1`, which every route on the node carries
 (invariant 1). Even on the right host it would have been a 404.
 
-A third followed from the same root, and is fixed here: the identifier was *spelled*
-like an address, so it kept getting used as one — as the fallback `accessURL` host, and
-as `dcat:landingPage` outright. It is now minted under one project namespace the project
-owns, with the node as a path segment and not a hostname, which is a shape nobody can
-mistake for somewhere to GET.
+A third followed from the same root: the identifier was *spelled* like an address, so
+it kept getting used as one — as the fallback `accessURL` host, and as `dcat:landingPage`
+outright. It is now minted under one project namespace the project owns, with the node as
+a path segment and not a hostname, which is a shape nobody can mistake for somewhere to
+GET. `dcat:landingPage` is no longer published at all: the replacement pointed at the
+admin UI under `/ui`, which the Cloud gateway does not route.
 """
 
 from __future__ import annotations
@@ -31,7 +32,6 @@ from circuless_node.dcat import (
     IDENTIFIER_BASE,
     access_url,
     invoke_url,
-    landing_page,
     render,
     resource_uri,
 )
@@ -221,34 +221,56 @@ def test_what_does_not_depend_on_the_address_survives() -> None:
     assert record["dcat:endpointDescription"] == "https://beta.example/openapi.json"
 
 
-# --- landingPage is a page you can land on ------------------------------------------------
+# --- landingPage is not published ----------------------------------------------------------
 
 
-def test_the_landing_page_is_the_nodes_own_page_for_the_resource() -> None:
-    """DCAT says `landingPage` is navigable. It used to be the `@id`, which is neither
-    a page nor navigable. The node's admin UI has a page per resource under `/ui`."""
-    record = render(service(), node_id="alpha-onprem", tenant_slug="beta", base_url=GATEWAY)
-    page = record["dcat:landingPage"]
+def test_no_record_carries_a_landing_page() -> None:
+    """R15 lists `landingPage` on a `dcat:DataService`, and this node does not publish it.
 
-    assert page == landing_page(GATEWAY, "beta", RESOURCE)
-    assert page.startswith(f"{GATEWAY}/ui/")
-    assert str(RESOURCE) in page
+    A landing page is one a reader can navigate to. This node has none to offer a
+    consumer: the only per-resource page it serves is in the admin UI under `/ui`, and
+    the Cloud gateway routes `/v1` and nothing else (C3, invariant 17), so the published
+    address cannot reach it — nor could a consumer from another organisation use it.
+
+    The field has been wrong twice, each time by pointing somewhere a reader could not
+    go: first the `@id`, which is a name and not a place, then that `/ui` page. Absent
+    says what is true.
+    """
+    for resource in (dataset(), service()):
+        published = render(resource, node_id="alpha-onprem", tenant_slug="beta", base_url=GATEWAY)
+        unpublished = render(resource, node_id="alpha-onprem", tenant_slug="beta")
+
+        assert "dcat:landingPage" not in published
+        assert "dcat:landingPage" not in unpublished
 
 
-def test_the_landing_page_is_on_a_mount_the_node_actually_serves(settings: Settings) -> None:
-    """`/ui` is the one anonymous prefix (invariant 2's single exemption). If it were
-    renamed or dropped, this URL would point at nothing — and the fragment after it is
-    the UI's own routing, which the server never sees."""
-    from circuless_node.app import ANONYMOUS_PREFIXES
+def test_nothing_in_a_record_points_at_the_ui_mount(settings: Settings) -> None:
+    """The stronger form, and the one that survives somebody reintroducing the field
+    under another name. `/ui` is invariant 2's single anonymous exemption and the
+    gateway does not route it, so no published value may lead there.
 
+    Asserted against the mount the app really has, so that renaming `/ui` cannot leave
+    this passing against a path nothing serves.
+    """
     from .harness.routes import mount_paths
 
-    page = landing_page(GATEWAY, "beta", RESOURCE)
-    path = urlparse(page).path
+    [mount] = mount_paths(create_public_app(settings))
+    record = render(service(), node_id="alpha-onprem", tenant_slug="beta", base_url=GATEWAY)
 
-    assert path.startswith("/ui/")
-    assert "/ui" in ANONYMOUS_PREFIXES
-    assert "/ui" in mount_paths(create_public_app(settings))
+    assert mount == "/ui"
+    assert f"{mount}/" not in str(record)
+
+
+def test_a_service_still_publishes_what_it_can_offer() -> None:
+    """Removing one field is not removing the shape. R15's point was that a service is
+    a `dcat:DataService` rather than a Dataset with a URL in it, and it still is."""
+    resource = service()
+    resource.openapi_ref = "https://beta.example/openapi.json"
+    record = render(resource, node_id="alpha-onprem", tenant_slug="beta", base_url=GATEWAY)
+
+    assert record["@type"] == "dcat:DataService"
+    assert record["dcat:endpointURL"].startswith(GATEWAY)
+    assert record["dcat:endpointDescription"] == "https://beta.example/openapi.json"
 
 
 def test_a_trailing_slash_on_the_address_does_not_double_up() -> None:
