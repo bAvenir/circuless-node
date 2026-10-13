@@ -132,6 +132,104 @@ def test_a_marked_tenant_is_pushed_and_unmarked(session: Session) -> None:
     assert session.exec(select(CataloguePush)).all() == []
 
 
+def test_the_pushed_record_carries_the_address_this_node_answers_on(session: Session) -> None:
+    """The wiring, not just the parameter.
+
+    `dcat.render` takes a base URL and `tick` passes one down, but nothing connected
+    either to the node's own `gateway_base_url` — so a mutation setting it to `None`
+    left every test green while the catalogue advertised a host nothing answers on.
+    That is the whole fault this change exists to fix, at the one point where it is
+    real.
+    """
+    add_resource(session)
+    session.add(CataloguePush(tenant_id=ALPHA))
+    session.commit()
+
+    cloud = FakeCloud()
+    tick(
+        session,
+        cloud,
+        SyncState(),
+        node_id="test-node",
+        now=NOW,
+        base_url="https://alpha.nodes.circuless.eu",
+    )
+
+    [(_, records)] = cloud.pushed
+    url = records[0]["dcat:distribution"][0]["dcat:accessURL"]
+    assert url.startswith("https://alpha.nodes.circuless.eu/v1/")
+
+
+def test_the_node_passes_its_configured_address_when_it_runs(tmp_path) -> None:  # noqa: ANN001
+    """`_one_pass` is where settings meet the catalogue, and it is the only place the
+    two are joined. Driven directly, because a `base_url=None` there is invisible
+    everywhere else."""
+    from circuless_node.settings import Settings
+    from circuless_node.sync import _one_pass
+
+    settings = Settings(  # type: ignore[call-arg]
+        node_id="test-node",
+        gateway_base_url="https://alpha.nodes.circuless.eu",
+        database_url=f"sqlite:///{tmp_path / 'n.db'}",
+        data_dir=tmp_path / "data",
+    )
+    engine = create_engine(settings.database_url)
+    SQLModel.metadata.create_all(engine)
+
+    with Session(engine) as seeded:
+        # The shared `session` fixture seeds this; a fresh engine does not.
+        seeded.add(Tenant(id=ALPHA, org_id=uuid.uuid4(), group_path="/orgs/alpha", slug="alpha"))
+        seeded.commit()
+        add_resource(seeded)
+        seeded.add(CataloguePush(tenant_id=ALPHA))
+        seeded.commit()
+
+    cloud = FakeCloud()
+    _one_pass(engine, cloud, SyncState(), settings, "0.0.0")
+
+    [(_, records)] = cloud.pushed
+    assert records[0]["dcat:distribution"][0]["dcat:accessURL"].startswith(
+        "https://alpha.nodes.circuless.eu/v1/"
+    )
+
+
+def test_a_node_reachable_only_over_the_overlay_advertises_that(tmp_path) -> None:  # noqa: ANN001
+    """The gateway is the fallback for browsers, not the only address.
+
+    A node on a partner's premises may be published at no gateway at all and still be
+    reachable by anything that can join the overlay (§5.6). Advertising nothing in that
+    case would make its catalogue records unfetchable for the clients that *can* reach
+    it, which is the opposite of the intent.
+    """
+    from circuless_node.settings import Settings
+    from circuless_node.sync import _one_pass
+
+    settings = Settings(  # type: ignore[call-arg]
+        node_id="alpha-onprem",
+        overlay_base_url="https://100.64.0.7:8000",
+        database_url=f"sqlite:///{tmp_path / 'n.db'}",
+        data_dir=tmp_path / "data",
+    )
+    assert settings.gateway_base_url is None
+
+    engine = create_engine(settings.database_url)
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as seeded:
+        seeded.add(Tenant(id=ALPHA, org_id=uuid.uuid4(), group_path="/orgs/alpha", slug="alpha"))
+        seeded.commit()
+        add_resource(seeded)
+        seeded.add(CataloguePush(tenant_id=ALPHA))
+        seeded.commit()
+
+    cloud = FakeCloud()
+    _one_pass(engine, cloud, SyncState(), settings, "0.0.0")
+
+    [(_, records)] = cloud.pushed
+    assert records[0]["dcat:distribution"][0]["dcat:accessURL"].startswith(
+        "https://100.64.0.7:8000/v1/"
+    )
+
+
 def test_nothing_is_pushed_when_nothing_changed(session: Session) -> None:
     add_resource(session)
     cloud = FakeCloud()

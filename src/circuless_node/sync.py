@@ -221,6 +221,10 @@ def tick(
     *,
     node_id: str,
     version: str | None = None,
+    # Where a consumer's browser reaches this node. Passed in rather than read from
+    # settings here so `tick` stays testable without a Settings object, and so the
+    # catalogue's `accessURL` is the address this node is actually published at.
+    base_url: str | None = None,
     now: dt.datetime | None = None,
 ) -> None:
     """Push, pull, heartbeat. One pass, no loop, no sleeping — so a test can call it.
@@ -246,7 +250,7 @@ def tick(
     # That inverts F16's priority: a node may be behind on what it advertises, and must
     # not silently fall behind on what it permits.
     try:
-        push_dirty_catalogues(session, cloud, node_id=node_id)
+        push_dirty_catalogues(session, cloud, node_id=node_id, base_url=base_url)
         state.push_succeeded(now=now)
     except CloudError as failure:
         state.push_failed(str(failure), now=now)
@@ -268,7 +272,9 @@ def tick(
         state.push_failed(str(failure), now=now)
 
 
-def push_dirty_catalogues(session: Session, cloud: CloudTransport, *, node_id: str) -> None:
+def push_dirty_catalogues(
+    session: Session, cloud: CloudTransport, *, node_id: str, base_url: str | None = None
+) -> None:
     """Send the catalogue of every tenant N5 marked, then clear the mark.
 
     Cleared only after the push succeeds. A mark is cheap and a lost push is not: the
@@ -282,12 +288,16 @@ def push_dirty_catalogues(session: Session, cloud: CloudTransport, *, node_id: s
             session.delete(pending)
             continue
 
-        cloud.push_catalogue(tenant.slug, catalogue_for(session, tenant, node_id=node_id))
+        cloud.push_catalogue(
+            tenant.slug, catalogue_for(session, tenant, node_id=node_id, base_url=base_url)
+        )
         session.delete(pending)
         session.commit()
 
 
-def catalogue_for(session: Session, tenant: Tenant, *, node_id: str) -> list[dict[str, Any]]:
+def catalogue_for(
+    session: Session, tenant: Tenant, *, node_id: str, base_url: str | None = None
+) -> list[dict[str, Any]]:
     """Every DCAT record this tenant publishes.
 
     Filtered by `discoverability`, never by `visibility`: the first decides what may be
@@ -305,7 +315,7 @@ def catalogue_for(session: Session, tenant: Tenant, *, node_id: str) -> list[dic
             )
         ).all()
         return [
-            dcat.render(resource, node_id=node_id, tenant_slug=tenant.slug)
+            dcat.render(resource, node_id=node_id, tenant_slug=tenant.slug, base_url=base_url)
             for resource in resources
         ]
 
@@ -405,7 +415,17 @@ async def sync_loop(
 
 def _one_pass(engine, cloud, state, settings, version) -> None:  # noqa: ANN001
     with Session(engine) as session:
-        tick(session, cloud, state, node_id=settings.node_id, version=version)
+        tick(
+            session,
+            cloud,
+            state,
+            node_id=settings.node_id,
+            version=version,
+            # The gateway address if the node is published, otherwise the overlay one.
+            # A node with neither is not reachable by anyone, and the record falls back
+            # to the identifier's host — see `dcat.render`.
+            base_url=settings.gateway_base_url or settings.effective_overlay_base_url,
+        )
 
 
 # --- what /metrics reports ----------------------------------------------------------------------

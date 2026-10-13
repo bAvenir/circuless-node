@@ -43,21 +43,52 @@ def resource_uri(node_id: str, tenant_slug: str, resource_id) -> str:  # noqa: A
 
     Built from the node and tenant rather than being a bare UUID, so that a record lifted
     out of the catalogue still says where it came from.
+
+    **An identifier, not an address.** It is deterministic and depends on nothing a
+    deployment configures, which is exactly what an `@id` should be — and exactly what a
+    URL somebody fetches should not be. `resource_path` below is what goes on the wire.
     """
     return f"https://{node_id}.circuless.bavenir.eu/t/{tenant_slug}/resources/{resource_id}"
 
 
-def access_url(node_id: str, tenant_slug: str, resource_id) -> str:  # noqa: ANN001
-    return f"{resource_uri(node_id, tenant_slug, resource_id)}/data"
+def resource_path(tenant_slug: str, resource_id) -> str:  # noqa: ANN001
+    """Where this resource lives on whatever address the node answers."""
+    return f"/v1/t/{tenant_slug}/resources/{resource_id}"
 
 
-def invoke_url(node_id: str, tenant_slug: str, resource_id) -> str:  # noqa: ANN001
-    return f"{resource_uri(node_id, tenant_slug, resource_id)}/invoke"
+def access_url(base_url: str, tenant_slug: str, resource_id) -> str:  # noqa: ANN001
+    """Where a consumer fetches the bytes.
+
+    On `base_url` — the node's own public address — and not on the identifier's host.
+    DCAT-AP says a distribution's `accessURL` is where you get the data; one that is
+    not fetchable is simply wrong, and this one was: the identifier's host is a fixed
+    `{node_id}.circuless.bavenir.eu` pattern, while a node is published at whatever
+    `gateway_base_url` says, which for the beta is `…nodes.circuless.eu`. A browser
+    following the record went to a host nothing answered on.
+    """
+    return f"{base_url.rstrip('/')}{resource_path(tenant_slug, resource_id)}/data"
 
 
-def render(resource: Resource, *, node_id: str, tenant_slug: str) -> dict[str, Any]:
-    """One DCAT-AP record. Pure — no database, no settings beyond the two identifiers."""
+def invoke_url(base_url: str, tenant_slug: str, resource_id) -> str:  # noqa: ANN001
+    """Where a consumer calls the service — the node's `/invoke`, never upstream."""
+    return f"{base_url.rstrip('/')}{resource_path(tenant_slug, resource_id)}/invoke"
+
+
+def render(
+    resource: Resource, *, node_id: str, tenant_slug: str, base_url: str | None = None
+) -> dict[str, Any]:
+    """One DCAT-AP record. Pure — no database, and no settings beyond what is passed in.
+
+    `base_url` is this node's public address, as a consumer's browser would reach it
+    (`gateway_base_url`, or the overlay address for a client that can join it). The
+    identifier keeps its own fixed host; only the fetchable URLs move.
+
+    Defaults to the identifier's host when a node has no public address configured.
+    That is the pre-publication case: nothing can reach it anyway, so the record is no
+    less useful than before — and a node that *is* published must pass its address.
+    """
     uri = resource_uri(node_id, tenant_slug, resource.id)
+    reachable_at = base_url or f"https://{node_id}.circuless.bavenir.eu"
     record: dict[str, Any] = {
         "@context": {
             "dcat": "http://www.w3.org/ns/dcat#",
@@ -84,13 +115,13 @@ def render(resource: Resource, *, node_id: str, tenant_slug: str) -> dict[str, A
             {
                 "@type": "dcat:Distribution",
                 # The node's own path. Fetching it is decided by `decide()`.
-                "dcat:accessURL": access_url(node_id, tenant_slug, resource.id),
+                "dcat:accessURL": access_url(reachable_at, tenant_slug, resource.id),
                 "circuless:shape": resource.shape.value,
             }
         ]
     else:
         # The node's /invoke path, never `resource.endpoint_url` — see the module docstring.
-        record["dcat:endpointURL"] = invoke_url(node_id, tenant_slug, resource.id)
+        record["dcat:endpointURL"] = invoke_url(reachable_at, tenant_slug, resource.id)
         if resource.openapi_ref:
             record["dcat:endpointDescription"] = resource.openapi_ref
         record["dcat:landingPage"] = uri
