@@ -41,7 +41,7 @@ def node(realm: FixtureRealm, tmp_path) -> Settings:
         issuer=realm.issuer,
         database_url=f"sqlite:///{tmp_path / 'node.db'}",
         data_dir=tmp_path / "data",
-        cors_allow_origins=["https://ui.circuless.eu"],
+        cors_allow_origins=["https://console.example"],
     )
 
 
@@ -245,7 +245,9 @@ def test_a_service_is_a_dcat_dataservice_with_its_openapi_reference(
         tenant_scope(session, _tenant_id(session, "alpha")),
     ):
         resource = session.get(Resource, uuid.UUID(created["id"]))
-        record = dcat.render(resource, node_id=node.node_id, tenant_slug="alpha")
+        record = dcat.render(
+            resource, node_id=node.node_id, tenant_slug="alpha", base_url=PUBLISHED_AT
+        )
 
     assert record["@type"] == "dcat:DataService"
     assert record["dcat:endpointDescription"] == SERVICE["openapi_ref"]
@@ -264,7 +266,9 @@ def test_a_dataset_is_a_dcat_dataset_with_a_distribution(
         tenant_scope(session, _tenant_id(session, "alpha")),
     ):
         resource = session.get(Resource, uuid.UUID(created["id"]))
-        record = dcat.render(resource, node_id=node.node_id, tenant_slug="alpha")
+        record = dcat.render(
+            resource, node_id=node.node_id, tenant_slug="alpha", base_url=PUBLISHED_AT
+        )
 
     assert record["@type"] == "dcat:Dataset"
     assert record["dcat:distribution"][0]["dcat:accessURL"].endswith("/data")
@@ -283,7 +287,9 @@ def test_the_catalogue_record_never_carries_the_upstream_endpoint(
         tenant_scope(session, _tenant_id(session, "alpha")),
     ):
         resource = session.get(Resource, uuid.UUID(created["id"]))
-        record = dcat.render(resource, node_id=node.node_id, tenant_slug="alpha")
+        record = dcat.render(
+            resource, node_id=node.node_id, tenant_slug="alpha", base_url=PUBLISHED_AT
+        )
 
     assert SERVICE["endpoint_url"] not in str(record)
     assert record["dcat:endpointURL"].endswith("/invoke")
@@ -305,7 +311,9 @@ def test_the_catalogue_record_never_carries_the_visibility(
         tenant_scope(session, _tenant_id(session, "alpha")),
     ):
         resource = session.get(Resource, uuid.UUID(created["id"]))
-        record = dcat.render(resource, node_id=node.node_id, tenant_slug="alpha")
+        record = dcat.render(
+            resource, node_id=node.node_id, tenant_slug="alpha", base_url=PUBLISHED_AT
+        )
 
     assert "visibility" not in str(record)
 
@@ -437,6 +445,13 @@ def test_the_push_flag_is_node_global_and_not_tenant_filtered(
     with Session(create_engine(node.database_url)) as session:
         # No tenant_scope, deliberately. A TenantOwned table would raise here.
         assert session.exec(select(CataloguePush)).all()
+
+
+#: The address this node is published at. Passed explicitly because `render` no longer
+#: invents one: a node that has not been told where it is publishes no fetchable URL at
+#: all, which is a case `test_dcat_urls.py` covers on purpose. These tests are about the
+#: shape of a published record, so they have to render as a published node.
+PUBLISHED_AT = "https://alpha.nodes.circuless.bavenir.eu"
 
 
 def _tenant_id(session: Session, slug: str) -> uuid.UUID:

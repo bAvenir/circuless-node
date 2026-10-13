@@ -24,7 +24,7 @@ def reachable(realm: FixtureRealm, tmp_path) -> Settings:
         node_id=realm.node_id,
         issuer=realm.issuer,
         overlay_base_url="https://100.64.0.7:8000",
-        gateway_base_url="https://n1.nodes.circuless.eu",
+        gateway_base_url="https://n1.nodes.circuless.bavenir.eu",
         database_url=f"sqlite:///{tmp_path / 'node.db'}",
         data_dir=tmp_path / "data",
     )
@@ -104,7 +104,7 @@ def test_an_unconfigured_endpoint_is_omitted_not_null(realm: FixtureRealm, tmp_p
     settings = Settings(  # type: ignore[call-arg]
         node_id=realm.node_id,
         issuer=realm.issuer,
-        gateway_base_url="https://n1.nodes.circuless.eu",
+        gateway_base_url="https://n1.nodes.circuless.bavenir.eu",
         database_url=f"sqlite:///{tmp_path / 'n.db'}",
         data_dir=tmp_path / "d",
     )
@@ -203,14 +203,14 @@ def test_a_detected_overlay_address_is_published(
     settings = Settings(  # type: ignore[call-arg]
         node_id=realm.node_id,
         issuer=realm.issuer,
-        gateway_base_url="https://n1.nodes.circuless.eu",
+        gateway_base_url="https://n1.nodes.circuless.bavenir.eu",
         database_url=f"sqlite:///{tmp_path / 'n.db'}",
         data_dir=tmp_path / "d",
     )
     document = node_document(settings)
     assert document["endpoints"] == [
         {"kind": "overlay", "url": "http://100.92.1.7:8000"},
-        {"kind": "gateway", "url": "https://n1.nodes.circuless.eu"},
+        {"kind": "gateway", "url": "https://n1.nodes.circuless.bavenir.eu"},
     ]
 
 
@@ -221,7 +221,7 @@ def test_no_overlay_means_the_gateway_alone(realm: FixtureRealm, tmp_path, monke
     settings = Settings(  # type: ignore[call-arg]
         node_id=realm.node_id,
         issuer=realm.issuer,
-        gateway_base_url="https://n1.nodes.circuless.eu",
+        gateway_base_url="https://n1.nodes.circuless.bavenir.eu",
         database_url=f"sqlite:///{tmp_path / 'n.db'}",
         data_dir=tmp_path / "d",
     )

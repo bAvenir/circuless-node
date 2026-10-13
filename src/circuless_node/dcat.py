@@ -37,6 +37,11 @@ from .vocabularies import LICENCES, ResourceKind
 #: vocabulary, so they get a project namespace rather than being bent into an EU one.
 THEME_BASE = "https://circuless.bavenir.eu/vocabulary/value-chain-phase"
 
+#: The namespace for resource identifiers. The same project namespace as `THEME_BASE`,
+#: and for the same reason: these are names the project mints, not addresses anything
+#: serves. Nothing listens here and nothing is meant to.
+IDENTIFIER_BASE = "https://circuless.bavenir.eu/id"
+
 
 def resource_uri(node_id: str, tenant_slug: str, resource_id) -> str:  # noqa: ANN001
     """The stable identifier for a resource across the platform.
@@ -47,8 +52,20 @@ def resource_uri(node_id: str, tenant_slug: str, resource_id) -> str:  # noqa: A
     **An identifier, not an address.** It is deterministic and depends on nothing a
     deployment configures, which is exactly what an `@id` should be — and exactly what a
     URL somebody fetches should not be. `resource_path` below is what goes on the wire.
+
+    It used to be built as `https://{node_id}.circuless.bavenir.eu/...`, which looked
+    like a node's address, was never any node's address, and resolved nowhere: nodes are
+    published under `*.nodes.circuless.bavenir.eu`. Two bugs came out of that shape
+    before this one — an `accessURL` on the wrong host, then the same host again as a
+    fallback — because a name that is spelled like an address eventually gets used as
+    one. It is now spelled so it cannot be: one namespace the project owns, with the
+    node as a path segment rather than a hostname, so a node moving host leaves every
+    identifier it ever minted unchanged.
+
+    The resource UUID stays the last segment: the Cloud recovers it from there
+    (`catalogue.parse_record`), because C6's agreements name a resource, not a record.
     """
-    return f"https://{node_id}.circuless.bavenir.eu/t/{tenant_slug}/resources/{resource_id}"
+    return f"{IDENTIFIER_BASE}/nodes/{node_id}/tenants/{tenant_slug}/resources/{resource_id}"
 
 
 def resource_path(tenant_slug: str, resource_id) -> str:  # noqa: ANN001
@@ -61,10 +78,12 @@ def access_url(base_url: str, tenant_slug: str, resource_id) -> str:  # noqa: AN
 
     On `base_url` — the node's own public address — and not on the identifier's host.
     DCAT-AP says a distribution's `accessURL` is where you get the data; one that is
-    not fetchable is simply wrong, and this one was: the identifier's host is a fixed
-    `{node_id}.circuless.bavenir.eu` pattern, while a node is published at whatever
-    `gateway_base_url` says, which for the beta is `…nodes.circuless.eu`. A browser
-    following the record went to a host nothing answered on.
+    not fetchable is simply wrong, and this one was: it was built from the identifier,
+    whose host was then a fixed `{node_id}.circuless.bavenir.eu` pattern, while a node
+    is published at whatever `gateway_base_url` says — `…nodes.circuless.bavenir.eu` in
+    the beta. A browser following the record went to a host nothing answered on. The
+    identifier no longer has a host anything could be tempted to fetch; see
+    `resource_uri`.
     """
     return f"{base_url.rstrip('/')}{resource_path(tenant_slug, resource_id)}/data"
 
@@ -74,6 +93,17 @@ def invoke_url(base_url: str, tenant_slug: str, resource_id) -> str:  # noqa: AN
     return f"{base_url.rstrip('/')}{resource_path(tenant_slug, resource_id)}/invoke"
 
 
+def landing_page(base_url: str, tenant_slug: str, resource_id) -> str:  # noqa: ANN001
+    """The node's own page for this resource.
+
+    DCAT says `landingPage` is a page you can navigate to. This used to be the `@id`,
+    which is not a page and not navigable — the one place the identifier was published
+    as an address outright. The node's admin UI does have a page per resource, at a
+    fragment under the `/ui` mount, so this points there.
+    """
+    return f"{base_url.rstrip('/')}/ui/#/t/{tenant_slug}/r/{resource_id}"
+
+
 def render(
     resource: Resource, *, node_id: str, tenant_slug: str, base_url: str | None = None
 ) -> dict[str, Any]:
@@ -81,14 +111,17 @@ def render(
 
     `base_url` is this node's public address, as a consumer's browser would reach it
     (`gateway_base_url`, or the overlay address for a client that can join it). The
-    identifier keeps its own fixed host; only the fetchable URLs move.
+    identifier is a name and never moves; every fetchable URL hangs off `base_url`.
 
-    Defaults to the identifier's host when a node has no public address configured.
-    That is the pre-publication case: nothing can reach it anyway, so the record is no
-    less useful than before — and a node that *is* published must pass its address.
+    **Without it, the record carries no URLs at all.** It used to fall back to the
+    identifier's host, which resolves nowhere, so a node with no configured address
+    published a record whose `accessURL` a browser could not follow — a wrong answer
+    dressed as a real one. A record that omits the URL says what is true: this node has
+    not told anyone where it is. `sync` passes the gateway address, or the overlay one,
+    and a node with neither is reachable by nobody anyway.
     """
     uri = resource_uri(node_id, tenant_slug, resource.id)
-    reachable_at = base_url or f"https://{node_id}.circuless.bavenir.eu"
+    reachable_at = base_url.rstrip("/") if base_url else None
     record: dict[str, Any] = {
         "@context": {
             "dcat": "http://www.w3.org/ns/dcat#",
@@ -111,20 +144,27 @@ def render(
     }
 
     if resource.kind is ResourceKind.DATASET:
-        record["dcat:distribution"] = [
-            {
-                "@type": "dcat:Distribution",
-                # The node's own path. Fetching it is decided by `decide()`.
-                "dcat:accessURL": access_url(reachable_at, tenant_slug, resource.id),
-                "circuless:shape": resource.shape.value,
-            }
-        ]
+        # No `base_url`, no distribution. DCAT-AP makes `accessURL` mandatory on a
+        # Distribution, so a distribution without one would be invalid, and a
+        # distribution with a made-up one is worse.
+        if reachable_at:
+            record["dcat:distribution"] = [
+                {
+                    "@type": "dcat:Distribution",
+                    # The node's own path. Fetching it is decided by `decide()`.
+                    "dcat:accessURL": access_url(reachable_at, tenant_slug, resource.id),
+                    "circuless:shape": resource.shape.value,
+                }
+            ]
     else:
-        # The node's /invoke path, never `resource.endpoint_url` — see the module docstring.
-        record["dcat:endpointURL"] = invoke_url(reachable_at, tenant_slug, resource.id)
+        if reachable_at:
+            # The node's /invoke path, never `resource.endpoint_url` — see the module
+            # docstring.
+            record["dcat:endpointURL"] = invoke_url(reachable_at, tenant_slug, resource.id)
+            record["dcat:landingPage"] = landing_page(reachable_at, tenant_slug, resource.id)
+        # Independent of the node's address: it is the provider's own document.
         if resource.openapi_ref:
             record["dcat:endpointDescription"] = resource.openapi_ref
-        record["dcat:landingPage"] = uri
 
     return record
 

@@ -79,7 +79,7 @@ class Settings(BaseSettings):
     gateway_base_url: str | None = Field(
         default=None,
         description="This node's public address through the Cloud gateway, e.g. "
-        "https://alpha.nodes.circuless.eu. The fallback for browsers and for clients "
+        "https://alpha.nodes.circuless.bavenir.eu. The fallback for browsers and for clients "
         "that cannot join the overlay.",
     )
 

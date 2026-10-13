@@ -152,12 +152,12 @@ def test_the_pushed_record_carries_the_address_this_node_answers_on(session: Ses
         SyncState(),
         node_id="test-node",
         now=NOW,
-        base_url="https://alpha.nodes.circuless.eu",
+        base_url="https://alpha.nodes.circuless.bavenir.eu",
     )
 
     [(_, records)] = cloud.pushed
     url = records[0]["dcat:distribution"][0]["dcat:accessURL"]
-    assert url.startswith("https://alpha.nodes.circuless.eu/v1/")
+    assert url.startswith("https://alpha.nodes.circuless.bavenir.eu/v1/")
 
 
 def test_the_node_passes_its_configured_address_when_it_runs(tmp_path) -> None:  # noqa: ANN001
@@ -169,7 +169,7 @@ def test_the_node_passes_its_configured_address_when_it_runs(tmp_path) -> None: 
 
     settings = Settings(  # type: ignore[call-arg]
         node_id="test-node",
-        gateway_base_url="https://alpha.nodes.circuless.eu",
+        gateway_base_url="https://alpha.nodes.circuless.bavenir.eu",
         database_url=f"sqlite:///{tmp_path / 'n.db'}",
         data_dir=tmp_path / "data",
     )
@@ -189,7 +189,7 @@ def test_the_node_passes_its_configured_address_when_it_runs(tmp_path) -> None: 
 
     [(_, records)] = cloud.pushed
     assert records[0]["dcat:distribution"][0]["dcat:accessURL"].startswith(
-        "https://alpha.nodes.circuless.eu/v1/"
+        "https://alpha.nodes.circuless.bavenir.eu/v1/"
     )
 
 
@@ -665,9 +665,18 @@ async def test_the_loop_records_an_unexpected_error_rather_than_dying(tmp_path) 
     # `engine=None` makes `_one_pass` raise something that is not a CloudError, which is
     # exactly the path the handler exists for.
     task = asyncio.create_task(sync_loop(settings, None, state, interval=0.01))
-    await asyncio.sleep(0.2)
+
+    # Wait for the *second* failure rather than sleeping a fixed 0.2s. Two is what makes
+    # this test say what it means — the loop recorded an error and came back for another
+    # pass — and polling for it is not a race with the scheduler. The fixed sleep failed
+    # about one run in four on a loaded machine, which is a flake in CI and a morning
+    # lost to a test that was right all along.
+    deadline = asyncio.get_running_loop().time() + 5
+    while state.consecutive_pull_failures < 2 and asyncio.get_running_loop().time() < deadline:
+        await asyncio.sleep(0.01)
+
     assert not task.done(), "the loop died instead of recording the error"
     task.cancel()
 
-    assert state.consecutive_pull_failures > 0
+    assert state.consecutive_pull_failures >= 2
     assert "sync loop" in (state.last_pull_error or "")

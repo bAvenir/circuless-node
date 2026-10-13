@@ -63,6 +63,8 @@ Each one has a test. A change that weakens one needs J's explicit approval.
    | `public` | any authenticated user or service — never anonymous, never a node |
 
    The forward-auth shape (`/internal/authz`) is an early reject only. It never writes an AccessLog entry, and the in-process check always runs as well (R7).
+
+   **The beta's edge does not call it** (13 Oct). The endpoint stays — it is one of D1's three deployment shapes, and the invariants above still hold for it — but the Cloud gateway makes no `forward-auth` request. The overlay policy admits the gateway to 8000 only and says 8001 is never exposed to it, so the design and the policy contradicted each other, and R7 means the node decides again in process regardless. See *Decisions taken for the beta* in `circuless-cloud/CLAUDE.md`.
 8. **Tenancy** (R10).
    - Tenant-owned tables carry `tenant_id` and are filtered once, centrally, with `with_loader_criteria`.
    - Node-global tables — `AgreementCache`, `OrgMap`, `NodeIdentity` — are explicitly excluded.

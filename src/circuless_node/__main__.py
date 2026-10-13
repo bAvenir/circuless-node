@@ -40,8 +40,8 @@ async def _serve(settings: Settings) -> None:
             host=settings.public_host,
             port=settings.public_port,
             log_level="info",
-            # The node sits behind APISIX on the cloud path, which passes the real client
-            # address in X-Forwarded-For.
+            # The node sits behind the Cloud edge on the cloud path, which passes the
+            # real client address in X-Forwarded-For.
             proxy_headers=True,
             forwarded_allow_ips="*",
         )

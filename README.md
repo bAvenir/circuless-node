@@ -979,6 +979,12 @@ defaulting to `data_dir/fernet.key`. Point it somewhere the data backup does not
 `"*"` (G7). Browser downloads through the gateway are cross-origin and carry a bearer token,
 so a wildcard would let any site spend a user's node token.
 
+For the beta the list is `["https://api.circuless.bavenir.eu"]`. The management console
+is served at `https://api.circuless.bavenir.eu/console`, and the origin a browser sends
+is the **host alone** — no path, no trailing slash. A node whose list names the path, or
+a host that does not exist, fails T24's cross-origin download at the preflight, before
+any token is checked.
+
 ## State of the build
 
 **M1, complete:** **N1** skeleton, **N14** storage, **H3**'s `/v1` prefix, **Q1** test
@@ -994,7 +1000,15 @@ outside BVR's network.
 H3's path confinement, **N19** upload, **N20** two-stage deletion, **N10** service
 credentials, **N9** the service proxy. **M3's node work is complete.**
 
-Next: M4 — **N13** admin UI and **N16** packaging — plus the reference service and
-integration requirements that replaced X3/X4.
+**M4, in progress:** **N13** the admin UI — built as static files plus PKCE in the
+browser, served from `/ui/*`, not the Jinja + htmx the design proposed. **N16** packaging
+is done: `bvr-ci` publishes and cosign-signs `reg.bavenir.eu/private/circuless-node`, and
+`SECURITY.md` carries the public key to verify it with.
 
-Not yet built: the admin UI (N13) and packaging (N16), both M4.
+Still open in M4: the three deployments (BVR cloud, BVR on-prem, BVR external), the
+reference service, and the integration requirements that replaced X3/X4.
+
+**Two decisions taken for the beta** (13 Oct), both recorded in `circuless-cloud/CLAUDE.md`:
+the Cloud edge is Traefik rather than APISIX, and it makes no `forward-auth` call to this
+node's `/internal/authz`. Neither changes anything the node does — it has always decided
+in process (R7) — but the endpoint is now unused on the cloud path.

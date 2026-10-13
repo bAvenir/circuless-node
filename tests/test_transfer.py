@@ -48,7 +48,7 @@ def node(realm: FixtureRealm, tmp_path) -> Settings:
         issuer=realm.issuer,
         database_url=f"sqlite:///{tmp_path / 'node.db'}",
         data_dir=tmp_path / "data",
-        cors_allow_origins=["https://ui.circuless.eu"],
+        cors_allow_origins=["https://console.example"],
     )
 
 

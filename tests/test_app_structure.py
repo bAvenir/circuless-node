@@ -87,11 +87,11 @@ def test_cors_headers_are_returned_for_an_allowed_origin(settings: Settings) -> 
     response = client.options(
         f"{API_PREFIX}/anything",
         headers={
-            "Origin": "https://ui.circuless.eu",
+            "Origin": "https://console.example",
             "Access-Control-Request-Method": "GET",
         },
     )
-    assert response.headers.get("access-control-allow-origin") == "https://ui.circuless.eu"
+    assert response.headers.get("access-control-allow-origin") == "https://console.example"
     # Browser downloads through the gateway send Authorization cross-origin.
     assert response.headers.get("access-control-allow-credentials") == "true"
 

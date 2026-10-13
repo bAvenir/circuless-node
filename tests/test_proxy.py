@@ -51,8 +51,8 @@ def node(realm: FixtureRealm, tmp_path) -> Settings:
         issuer=realm.issuer,
         database_url=f"sqlite:///{tmp_path / 'node.db'}",
         data_dir=tmp_path / "data",
-        gateway_base_url="https://alpha.nodes.circuless.eu",
-        cors_allow_origins=["https://ui.circuless.eu"],
+        gateway_base_url="https://alpha.nodes.circuless.bavenir.eu",
+        cors_allow_origins=["https://console.example"],
     )
 
 
@@ -386,7 +386,7 @@ def test_a_redirect_is_rewritten_back_through_the_node(
     # written from the same mistaken code it was checking — the rewritten URL was a 404.
     # `test_reference_service.py` follows it for real, which is what found that.
     assert response.headers["location"] == (
-        f"https://alpha.nodes.circuless.eu/v1/t/alpha/resources/{resource_id}/invoke/jobs/7?x=1"
+        f"https://alpha.nodes.circuless.bavenir.eu/v1/t/alpha/resources/{resource_id}/invoke/jobs/7?x=1"
     )
 
 
@@ -408,7 +408,7 @@ def test_a_node_with_no_gateway_url_still_rewrites(
         issuer=realm.issuer,
         database_url=f"sqlite:///{tmp_path / 'node.db'}",
         data_dir=tmp_path / "data",
-        cors_allow_origins=["https://ui.circuless.eu"],
+        cors_allow_origins=["https://console.example"],
     )
     assert settings.gateway_base_url is None
     assert settings.effective_overlay_base_url is None

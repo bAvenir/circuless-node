@@ -422,8 +422,8 @@ def _one_pass(engine, cloud, state, settings, version) -> None:  # noqa: ANN001
             node_id=settings.node_id,
             version=version,
             # The gateway address if the node is published, otherwise the overlay one.
-            # A node with neither is not reachable by anyone, and the record falls back
-            # to the identifier's host — see `dcat.render`.
+            # A node with neither is reachable by nobody, and its records then carry no
+            # fetchable URL at all rather than a guessed one — see `dcat.render`.
             base_url=settings.gateway_base_url or settings.effective_overlay_base_url,
         )
 
