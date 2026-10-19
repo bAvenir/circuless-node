@@ -215,7 +215,7 @@ the access log can tell you afterwards.
 |---|---|---|
 | **A** the browser calls the node | the person | in use |
 | **B** your backend calls the node as itself | your application | supported; no configuration needed beyond a registered account |
-| **C** your backend calls the node acting for the person | the person, with your application recorded alongside | designed and spiked; needs configuration per application; **not yet exercised end to end** |
+| **C** your backend calls the node acting for the person | the person, with your application recorded alongside | needs configuration per application; worked example in [`examples/acting-for-a-user`](examples/acting-for-a-user) |
 
 **A is recommended** for anything a person initiates. The access log names them, and your
 backend never handles another organisation's data.
@@ -228,6 +228,11 @@ your application's organisation rather than the person's.
 **C** is for a backend that must act for a person without a browser present. It uses
 token exchange; the platform operator must configure it for your application, which is a
 trust decision as well as a technical one.
+
+[`examples/acting-for-a-user`](examples/acting-for-a-user) runs B and C against a real
+identity provider, and prints the claims of every token so you can see what the node
+will see. The exchanged token keeps the person as `sub` and adds your application as
+`azp`; your own `principal_type` and `org_id` do **not** travel with it (D17).
 
 ### Tokens and audiences
 
