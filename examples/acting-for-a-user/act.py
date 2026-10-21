@@ -72,8 +72,10 @@ def keypair(args: argparse.Namespace) -> int:
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     path = pathlib.Path(args.key)
     if path.exists() and not args.force:
-        raise SystemExit(f"{path} exists. Use --force only if you mean to replace it — the\n"
-                         "  certificate registered for this client will stop matching.")
+        raise SystemExit(
+            f"{path} exists. Use --force only if you mean to replace it — the\n"
+            "  certificate registered for this client will stop matching."
+        )
 
     path.write_bytes(
         key.private_bytes(
@@ -98,7 +100,7 @@ def keypair(args: argparse.Namespace) -> int:
     )
 
     print(f"private key written to {path} (0600) — it does not leave this machine", file=sys.stderr)
-    print(f"send the operator everything below; they run `kc.py register-cert`\n", file=sys.stderr)
+    print("send the operator everything below; they run `kc.py register-cert`\n", file=sys.stderr)
     print(certificate.public_bytes(serialization.Encoding.PEM).decode(), end="")
     return 0
 
@@ -208,24 +210,58 @@ def for_user(args: argparse.Namespace) -> int:
     return call_node(args, payload["access_token"])
 
 
+def node_url(args: argparse.Namespace) -> str:
+    """Where on the node this call goes.
+
+    Two shapes, because a resource is one of two things. A **dataset** has bytes, which
+    you read; a **service** has an endpoint, which you invoke and the node proxies. The
+    agreement has to permit the matching action — `read` or `invoke` — and an agreement
+    for the wrong one refuses with `no_agreement`, which reads like no agreement at all.
+    """
+    base = f"{args.node.rstrip('/')}/v1/t/{args.tenant}/resources/{args.resource}"
+    if args.invoke is None:
+        return f"{base}/data"
+    return f"{base}/invoke/{args.invoke.lstrip('/')}"
+
+
 def call_node(args: argparse.Namespace, token: str) -> int:
-    """`GET /v1/t/{tenant}/resources/{id}/data` — the same path a browser would use."""
+    """Call the node with the token just obtained, and report what it said."""
     if args.no_call:
         # "Did I get the right token?" is the first question when an integration does
         # not work, and it is answerable without a node being involved at all.
         print("\n  --no-call: stopping before the node")
         return 0
 
-    url = f"{args.node.rstrip('/')}/v1/t/{args.tenant}/resources/{args.resource}/data"
-    request = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})  # nosec B310
+    url = node_url(args)
+    body = None
+    headers = {"Authorization": f"Bearer {token}"}
+    if args.body is not None:
+        # `@name` reads a file, anything else is the literal bytes — the convention
+        # curl uses, so nobody has to learn a second one.
+        body = (
+            pathlib.Path(args.body[1:]).read_bytes()
+            if args.body.startswith("@")
+            else args.body.encode()
+        )
+        headers["Content-Type"] = args.content_type
+
+    # `Authorization` is the only credential sent, and the node does **not** pass it on:
+    # it strips it, along with any inbound `X-CIRCULess-*`, and injects its own headers
+    # naming the subject, the acting organisation and the resource (invariant 10). So a
+    # service behind the node never sees this token and cannot be made to trust one.
+    request = urllib.request.Request(  # nosec B310 — https, from the --node argument
+        url, data=body, headers=headers, method=args.method
+    )
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:  # nosec B310
-            body = response.read()
-        print(f"\n  {url}\n  {response.status} — {len(body)} bytes")
+        with urllib.request.urlopen(request, timeout=args.timeout) as response:  # nosec B310
+            answered = response.read()
+        print(f"\n  {args.method} {url}\n  {response.status} — {len(answered)} bytes")
+        if answered[:400].strip():
+            print(f"  {answered[:400].decode(errors='replace')}")
         return 0
     except urllib.error.HTTPError as refused:
         detail = (refused.read() or b"").decode()[:300]
-        print(f"\n  {url}\n  {refused.code} — {detail}")
+        print(f"\n  {args.method} {url}\n  {refused.code} — {detail}")
         # A refusal is the expected answer for pattern B against someone else's data,
         # so this is not an error exit: the caller decides what they were testing.
         return 0
@@ -253,6 +289,16 @@ def main() -> int:
         call.add_argument("--audience", required=True, help="node:<node_id>")
         call.add_argument("--tenant", required=True)
         call.add_argument("--resource", required=True, help="the resource uuid")
+        call.add_argument(
+            "--invoke",
+            metavar="PATH",
+            help="call the resource's service at this path instead of reading its data; "
+            "the agreement must permit `invoke` rather than `read`",
+        )
+        call.add_argument("--method", default="GET", help="for --invoke; default GET")
+        call.add_argument("--body", help="for --invoke; a literal string, or @file")
+        call.add_argument("--content-type", default="application/json")
+        call.add_argument("--timeout", type=float, default=30.0)
         call.add_argument(
             "--no-call",
             action="store_true",

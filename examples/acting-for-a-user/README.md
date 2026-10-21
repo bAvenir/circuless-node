@@ -38,6 +38,29 @@ uv run act.py as-itself \
 Client credentials, no exchange. The token carries `principal_type: service` and your
 own `org_id`, and the node's access log will name your application.
 
+## Reading a dataset, or invoking a service
+
+A resource is one of two things, and they are different endpoints with **different
+actions in the agreement**:
+
+| | the call | the agreement must permit |
+|---|---|---|
+| a dataset | `GET …/resources/<id>/data` — the default | `read` |
+| a service | `… …/resources/<id>/invoke/<path>` — add `--invoke` | `invoke` |
+
+```sh
+uv run act.py as-itself ... --invoke grade/batch --method POST --body '{"board":7}'
+```
+
+`--body` takes a literal string, or `@file` — the convention curl uses. An agreement
+that permits the wrong one of the two refuses with `no_agreement`, which reads like no
+agreement at all rather than like the wrong action.
+
+**Your `Authorization` header never reaches the service.** The node strips it, along
+with any inbound `X-CIRCULess-*`, and injects its own headers naming the subject, the
+acting organisation and the resource (invariant 10). So the service cannot see your
+token and cannot be tricked into trusting a header you sent.
+
 ## C — acting for a person
 
 ```sh

@@ -102,3 +102,67 @@ def test_every_subcommand_is_reachable(source: str) -> None:
     for command in ("keypair", "as-itself", "for-user"):
         assert f'"{command}"' in source, command
     assert source.count("set_defaults") >= 2
+
+
+# --- which endpoint the call goes to ------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def module():
+    """The example, imported. `node_url` is pure, so it can be checked directly."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("act", EXAMPLE)
+    assert spec and spec.loader
+    loaded = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(loaded)
+    return loaded
+
+
+def args(**overrides):
+    import argparse
+
+    base = {
+        "node": "https://alpha-onprem.nodes.circuless.bavenir.eu",
+        "tenant": "alpha",
+        "resource": "7f3a9c21",
+        "invoke": None,
+    }
+    return argparse.Namespace(**{**base, **overrides})
+
+
+def test_without_invoke_it_reads_the_data(module) -> None:  # noqa: ANN001
+    """A dataset. Unchanged, and asserted because adding the service path is exactly
+    the kind of change that quietly redirects the existing one."""
+    assert module.node_url(args()).endswith("/v1/t/alpha/resources/7f3a9c21/data")
+
+
+def test_with_invoke_it_calls_the_service(module) -> None:  # noqa: ANN001
+    """A service is proxied at `/invoke/{path}`, never read at `/data` — different
+    endpoints, and **different actions in the agreement**: `invoke` rather than `read`.
+    An agreement for the wrong one refuses with `no_agreement`, which reads like no
+    agreement at all."""
+    url = module.node_url(args(invoke="grade"))
+
+    assert url.endswith("/v1/t/alpha/resources/7f3a9c21/invoke/grade")
+    assert "/data" not in url
+
+
+def test_a_nested_service_path_survives(module) -> None:  # noqa: ANN001
+    """`/invoke/{path:path}` on the node takes everything after it, so a service with
+    its own routes works without this example knowing about them."""
+    assert module.node_url(args(invoke="jobs/7/status")).endswith("/invoke/jobs/7/status")
+
+
+def test_a_leading_slash_does_not_double_up(module) -> None:  # noqa: ANN001
+    """`--invoke /grade` is what anyone copying a path out of an OpenAPI document will
+    type, and `//grade` is not the same route."""
+    assert "//grade" not in module.node_url(args(invoke="/grade"))
+
+
+def test_the_caller_sends_only_its_own_credential(source: str) -> None:
+    """Invariant 10: the node strips `Authorization` and any inbound `X-CIRCULess-*`
+    before proxying, and injects its own. An example that sent a subject header would
+    teach people to forge the thing the node exists to assert."""
+    assert "X-CIRCULess-Subject" not in source
+    assert "X-CIRCULess-Org" not in source
