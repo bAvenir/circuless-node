@@ -84,6 +84,14 @@ jobs:
           uvx --from semgrep semgrep --config p/python --config p/secrets \
             --error --quiet src tests
 
+      # The document is the only published description of the node's API — the
+      # documentation site renders from it. A stale copy is worse than none.
+      - name: The committed OpenAPI document matches the code
+        run: |
+          uv run circuless-node-openapi
+          git diff --exit-code openapi.json \
+            || { echo "::error::openapi.json is stale — run `uv run circuless-node-openapi`" >&2; exit 1; }
+
       - name: Lockfile is in sync with pyproject.toml
         run: uv lock --check
 

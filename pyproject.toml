@@ -26,6 +26,9 @@ dependencies = [
 
 [project.scripts]
 circuless-node = "circuless_node.__main__:main"
+# Writes openapi.json. The public app does not serve its schema (openapi_url=None), so
+# this is how the document is produced; CI fails if the committed copy has drifted.
+circuless-node-openapi = "circuless_node.openapi:main"
 
 [dependency-groups]
 dev = [

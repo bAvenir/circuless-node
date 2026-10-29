@@ -1,0 +1,1606 @@
+{
+  "components": {
+    "schemas": {
+      "Classification": {
+        "description": "How sensitive the content is (D22).\n\nA **BVR-operated node refuses `sensitive`** \u2014 see `settings.NodeOperator`. The point is\nnot that BVR's node is less secure; it is that BVR should not be holding a partner's\nsensitive data on the partner's behalf, whatever the node's security posture.",
+        "enum": [
+          "synthetic",
+          "non-sensitive",
+          "sensitive"
+        ],
+        "title": "Classification",
+        "type": "string"
+      },
+      "CredentialIn": {
+        "properties": {
+          "header_name": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Header Name"
+          },
+          "scheme": {
+            "$ref": "#/components/schemas/Scheme"
+          },
+          "secret": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "title": "Secret",
+            "type": "string"
+          },
+          "username": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Username"
+          }
+        },
+        "required": [
+          "scheme",
+          "secret"
+        ],
+        "title": "CredentialIn",
+        "type": "object"
+      },
+      "Discoverability": {
+        "description": "Who may see that this resource **exists** (NFR4).\n\nDistinct from `Visibility`, and the two are easy to confuse. This one governs\nmetadata: what reaches the Cloud catalogue and what a search returns. It never grants\naccess to anything.\n\nDefaults to `hidden`: a resource just registered is not advertised anywhere until\nsomeone says otherwise.",
+        "enum": [
+          "hidden",
+          "catalogue",
+          "public"
+        ],
+        "title": "Discoverability",
+        "type": "string"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "ResourceIn": {
+        "properties": {
+          "classification": {
+            "$ref": "#/components/schemas/Classification"
+          },
+          "description": {
+            "default": "",
+            "maxLength": 4000,
+            "title": "Description",
+            "type": "string"
+          },
+          "discoverability": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Discoverability"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "endpoint_url": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Endpoint Url"
+          },
+          "invoke_policy": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invoke Policy"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ResourceKind"
+          },
+          "licence": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Licence"
+          },
+          "openapi_ref": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Openapi Ref"
+          },
+          "shape": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Shape"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "slug": {
+            "maxLength": 64,
+            "pattern": "^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$",
+            "title": "Slug",
+            "type": "string"
+          },
+          "storage_path": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Storage Path"
+          },
+          "theme": {
+            "$ref": "#/components/schemas/Theme"
+          },
+          "title": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          },
+          "visibility": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Visibility"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "slug",
+          "kind",
+          "title",
+          "theme",
+          "classification"
+        ],
+        "title": "ResourceIn",
+        "type": "object"
+      },
+      "ResourceKind": {
+        "enum": [
+          "dataset",
+          "service"
+        ],
+        "title": "ResourceKind",
+        "type": "string"
+      },
+      "ResourcePatch": {
+        "description": "Every field optional. `slug` and `kind` are absent \u2014 neither can change.\n\nA slug is how a provider's scripts refer to the resource, and the kind decides which\nDCAT-AP type the catalogue already published. Changing either is registering a\ndifferent resource.",
+        "properties": {
+          "classification": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Classification"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 4000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "discoverability": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Discoverability"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "endpoint_url": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Endpoint Url"
+          },
+          "invoke_policy": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invoke Policy"
+          },
+          "licence": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Licence"
+          },
+          "openapi_ref": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Openapi Ref"
+          },
+          "storage_path": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Storage Path"
+          },
+          "theme": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Theme"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "visibility": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Visibility"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "ResourcePatch",
+        "type": "object"
+      },
+      "Scheme": {
+        "description": "How the upstream expects to be authenticated.",
+        "enum": [
+          "bearer",
+          "header",
+          "basic"
+        ],
+        "title": "Scheme",
+        "type": "string"
+      },
+      "Shape": {
+        "description": "How the content is held. `service` has no stored content at all.",
+        "enum": [
+          "file",
+          "bucket",
+          "service"
+        ],
+        "title": "Shape",
+        "type": "string"
+      },
+      "Theme": {
+        "description": "`dcat:theme`, from the value-chain phase vocabulary.\n\nFour phases, fixed by the project rather than by us. A free-text theme would make the\ncatalogue's faceted search meaningless within a month.",
+        "enum": [
+          "material-characterisation",
+          "processing",
+          "product-development",
+          "value-chain"
+        ],
+        "title": "Theme",
+        "type": "string"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      },
+      "Visibility": {
+        "description": "Who may **read or invoke** the resource itself (NFR4).\n\nDecided by `decide()` (N6), never here. Defaults to `org`: the owning organisation\nand nobody else.\n\n`public` means any authenticated user or service \u2014 never anonymous, and never a node\n(D14, D21).",
+        "enum": [
+          "private",
+          "org",
+          "agreement",
+          "public"
+        ],
+        "title": "Visibility",
+        "type": "string"
+      }
+    }
+  },
+  "info": {
+    "title": "CIRCULess Node",
+    "version": "0.5.2"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/.well-known/circuless-node": {
+      "get": {
+        "description": "What this node is, and how to reach it (N12).\n\nOutside `/v1` by convention and inside D21 by rule: the dependency is what makes\nan anonymous request 401, and the route-auth test asserts it along with every\nother route rather than trusting this line.",
+        "operationId": "get_well_known_circuless_node",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Well Known  Well Known Circuless Node Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Well Known"
+      }
+    },
+    "/v1/t/{tenant_slug}/access-log": {
+      "get": {
+        "description": "Every decision this node made about this tenant's resources (N11).\n\nAdmins of the owning organisation only, which `decide_management` enforces \u2014\nand this read is itself a management decision, so it appears in the log it\nreturns. That is intended: \"who has been reading the access log\" is exactly the\nsort of question an access log should be able to answer about itself.\n\nNewest first, and paged rather than streamed: this is an investigation tool, and\nan operator who needs the whole thing has the database.",
+        "operationId": "get_v1_t_tenant_slug_access_log",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tenant_slug",
+            "required": true,
+            "schema": {
+              "title": "Tenant Slug",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 1000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "resource_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Resource Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "decision",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^(allow|deny)$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Decision"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Read Access Log V1 T  Tenant Slug  Access Log Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Read Access Log"
+      }
+    },
+    "/v1/t/{tenant_slug}/resources": {
+      "get": {
+        "description": "Every resource of this tenant, for a caller who may manage them.\n\nNot filtered by `visibility` \u2014 that is consumption, and `decide()` (N6) owns it.\nA management caller is an admin or a service of the owning organisation, and\n`visibility=private` is about consumers rather than about them.",
+        "operationId": "get_v1_t_tenant_slug_resources",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tenant_slug",
+            "required": true,
+            "schema": {
+              "title": "Tenant Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response List Resources V1 T  Tenant Slug  Resources Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Resources"
+      },
+      "post": {
+        "operationId": "post_v1_t_tenant_slug_resources",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tenant_slug",
+            "required": true,
+            "schema": {
+              "title": "Tenant Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResourceIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Register V1 T  Tenant Slug  Resources Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Register"
+      }
+    },
+    "/v1/t/{tenant_slug}/resources/{resource_id}": {
+      "delete": {
+        "description": "Stage one of two (N20, D25). Marks the resource withdrawn; removes nothing.\n\nFrom this moment `decide()` denies every read and invoke with `not_found`, and\nthe next sync drops the record from the catalogue push \u2014 the Cloud tombstones\nwhat a push no longer contains, so withdrawal propagates by absence rather than\nby a second call that could fail on its own.\n\nThe bytes stay until `purge_after`. That gap is the point: deletion that takes\neffect instantly and irreversibly is deletion nobody dares use, and a provider\nwho removes the wrong dataset has until then to say so.\n\n**Not idempotent.** A second `DELETE` is a 409, because by then the resource is\nvisible to its owner as withdrawn-and-scheduled, and answering \"done\" would\nhide the fact that the purge date was set by the *first* call and has not moved.",
+        "operationId": "delete_v1_t_tenant_slug_resources_resource_id",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tenant_slug",
+            "required": true,
+            "schema": {
+              "title": "Tenant Slug",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "resource_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Resource Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Withdraw Resource V1 T  Tenant Slug  Resources  Resource Id  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Withdraw Resource"
+      },
+      "get": {
+        "operationId": "get_v1_t_tenant_slug_resources_resource_id",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tenant_slug",
+            "required": true,
+            "schema": {
+              "title": "Tenant Slug",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "resource_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Resource Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Read Resource V1 T  Tenant Slug  Resources  Resource Id  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Read Resource"
+      },
+      "patch": {
+        "operationId": "patch_v1_t_tenant_slug_resources_resource_id",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tenant_slug",
+            "required": true,
+            "schema": {
+              "title": "Tenant Slug",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "resource_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Resource Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResourcePatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Update Resource V1 T  Tenant Slug  Resources  Resource Id  Patch",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Resource"
+      }
+    },
+    "/v1/t/{tenant_slug}/resources/{resource_id}/credential": {
+      "delete": {
+        "operationId": "delete_v1_t_tenant_slug_resources_resource_id_credential",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tenant_slug",
+            "required": true,
+            "schema": {
+              "title": "Tenant Slug",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "resource_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Resource Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Remove Credential"
+      },
+      "get": {
+        "description": "Whether one is set, of what kind, and when. Never the value.\n\nAdmins only, the same rule as setting it \u2014 reading the metadata is how you find\nout a credential exists to be attacked, and there is no one who needs that but\ncannot be trusted with the rest.",
+        "operationId": "get_v1_t_tenant_slug_resources_resource_id_credential",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tenant_slug",
+            "required": true,
+            "schema": {
+              "title": "Tenant Slug",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "resource_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Resource Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Read Credential V1 T  Tenant Slug  Resources  Resource Id  Credential Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Read Credential"
+      },
+      "put": {
+        "description": "Set or rotate. Replaces whatever was there; there is no grace period.\n\nAn upstream credential is rotated at the upstream, and the window in which both\nwork is the upstream's business, not ours. Keeping the old one here \"just in\ncase\" would mean holding a secret its owner believes they have revoked.",
+        "operationId": "put_v1_t_tenant_slug_resources_resource_id_credential",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tenant_slug",
+            "required": true,
+            "schema": {
+              "title": "Tenant Slug",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "resource_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Resource Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CredentialIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Set Credential V1 T  Tenant Slug  Resources  Resource Id  Credential Put",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set Credential"
+      }
+    },
+    "/v1/t/{tenant_slug}/resources/{resource_id}/data": {
+      "get": {
+        "description": "A file's bytes, or a bucket's manifest \u2014 whichever this resource is.",
+        "operationId": "get_v1_t_tenant_slug_resources_resource_id_data",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tenant_slug",
+            "required": true,
+            "schema": {
+              "title": "Tenant Slug",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "resource_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Resource Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Read Data"
+      },
+      "put": {
+        "description": "Replace a `shape=file` resource's bytes.",
+        "operationId": "put_v1_t_tenant_slug_resources_resource_id_data",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tenant_slug",
+            "required": true,
+            "schema": {
+              "title": "Tenant Slug",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "resource_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Resource Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Upload File V1 T  Tenant Slug  Resources  Resource Id  Data Put",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Upload File"
+      }
+    },
+    "/v1/t/{tenant_slug}/resources/{resource_id}/data/{object_path}": {
+      "get": {
+        "description": "One object of a bucket, decided and logged on its own.",
+        "operationId": "get_v1_t_tenant_slug_resources_resource_id_data_object_path",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tenant_slug",
+            "required": true,
+            "schema": {
+              "title": "Tenant Slug",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "resource_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Resource Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "object_path",
+            "required": true,
+            "schema": {
+              "title": "Object Path",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Read Object"
+      },
+      "put": {
+        "description": "Replace one object of a `shape=bucket` resource.",
+        "operationId": "put_v1_t_tenant_slug_resources_resource_id_data_object_path",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tenant_slug",
+            "required": true,
+            "schema": {
+              "title": "Tenant Slug",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "resource_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Resource Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "object_path",
+            "required": true,
+            "schema": {
+              "title": "Object Path",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Upload Object V1 T  Tenant Slug  Resources  Resource Id  Data  Object Path  Put",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Upload Object"
+      }
+    },
+    "/v1/t/{tenant_slug}/resources/{resource_id}/invoke/{upstream_path}": {
+      "delete": {
+        "operationId": "delete_v1_t_tenant_slug_resources_resource_id_invoke_upstream_path",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tenant_slug",
+            "required": true,
+            "schema": {
+              "title": "Tenant Slug",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "resource_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Resource Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "upstream_path",
+            "required": true,
+            "schema": {
+              "title": "Upstream Path",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Invoke"
+      },
+      "get": {
+        "operationId": "get_v1_t_tenant_slug_resources_resource_id_invoke_upstream_path",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tenant_slug",
+            "required": true,
+            "schema": {
+              "title": "Tenant Slug",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "resource_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Resource Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "upstream_path",
+            "required": true,
+            "schema": {
+              "title": "Upstream Path",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Invoke"
+      },
+      "head": {
+        "operationId": "head_v1_t_tenant_slug_resources_resource_id_invoke_upstream_path",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tenant_slug",
+            "required": true,
+            "schema": {
+              "title": "Tenant Slug",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "resource_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Resource Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "upstream_path",
+            "required": true,
+            "schema": {
+              "title": "Upstream Path",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Invoke"
+      },
+      "options": {
+        "operationId": "options_v1_t_tenant_slug_resources_resource_id_invoke_upstream_path",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tenant_slug",
+            "required": true,
+            "schema": {
+              "title": "Tenant Slug",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "resource_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Resource Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "upstream_path",
+            "required": true,
+            "schema": {
+              "title": "Upstream Path",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Invoke"
+      },
+      "patch": {
+        "operationId": "patch_v1_t_tenant_slug_resources_resource_id_invoke_upstream_path",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tenant_slug",
+            "required": true,
+            "schema": {
+              "title": "Tenant Slug",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "resource_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Resource Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "upstream_path",
+            "required": true,
+            "schema": {
+              "title": "Upstream Path",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Invoke"
+      },
+      "post": {
+        "operationId": "post_v1_t_tenant_slug_resources_resource_id_invoke_upstream_path",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tenant_slug",
+            "required": true,
+            "schema": {
+              "title": "Tenant Slug",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "resource_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Resource Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "upstream_path",
+            "required": true,
+            "schema": {
+              "title": "Upstream Path",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Invoke"
+      },
+      "put": {
+        "operationId": "put_v1_t_tenant_slug_resources_resource_id_invoke_upstream_path",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tenant_slug",
+            "required": true,
+            "schema": {
+              "title": "Tenant Slug",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "resource_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Resource Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "upstream_path",
+            "required": true,
+            "schema": {
+              "title": "Upstream Path",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Invoke"
+      }
+    },
+    "/v1/tenants": {
+      "get": {
+        "description": "The tenants on this node whose organisation you belong to.",
+        "operationId": "get_v1_tenants",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response List Tenants V1 Tenants Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Tenants"
+      }
+    },
+    "/v1/whoami": {
+      "get": {
+        "description": "What this node makes of your token \u2014 the resolved subject, as `decide()` sees it.\n\nUseful in three places: it is the M1 demo \u2014 a node accepting a user token,\nrefusing a node token, refusing a token meant for another node; it gives someone\ninstalling a node from the guide a way to confirm it reads their tokens correctly;\nand it is how the route-auth test gets something real to check.\n\nIt discloses nothing the caller did not bring with them: these are their own\nclaims, normalised.",
+        "operationId": "get_v1_whoami",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Whoami V1 Whoami Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Whoami"
+      }
+    }
+  }
+}
