@@ -55,6 +55,14 @@ tests:
   trivy_scan: true          # trivy fs — vulnerabilities + misconfigurations (incl. Dockerfile) + secrets
   trivy_scanners: vuln,misconfig,secret   # comma-separated subset trivy should run
   trivy_severity: HIGH,CRITICAL           # comma-separated severities that fail the gate
+  sast_scan: true           # semgrep — static analysis of YOUR code (injection, unsafe deserialization, …)
+  sast_config: p/default    # semgrep ruleset(s), comma-separated or a list: registry packs (p/python,
+                             #   p/javascript, p/owasp-top-ten — downloaded from semgrep.dev) and/or
+                             #   local rule files/dirs (e.g. .semgrep/) for offline or custom rules
+  sast_severity: ERROR,HIGH,CRITICAL      # finding severities that fail the gate; lower ones
+                                           #   (WARNING/INFO) are printed as advisory, never block
+                             # Reviewed false positive? Add `# nosemgrep: <rule-id>` on that line;
+                             # exclude paths with a .semgrepignore file (.gitignore is honoured).
 
 # ---------------------------------------------------------------------------------------------
 # signing: sign each pushed image's digest with Cosign. Opt-IN (default off) — read the
