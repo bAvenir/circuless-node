@@ -104,6 +104,14 @@ _IMMUTABLE_COLUMNS = (
 
 _REFUSAL = "the access log is append-only (N11): only bytes may be set, and only once"
 
+#: The same message as a SQL string literal. Doubling the quote is the SQL standard's
+#: escape, and it is here because the message is English: writing "the node's access
+#: log" above would otherwise close the literal early and the migration would fail at
+#: `CREATE TRIGGER`, a long way from the edit that caused it. There is no injection
+#: vector — this is a module constant, not input — only a trap for the next person to
+#: improve the wording.
+_REFUSAL_SQL = _REFUSAL.replace("'", "''")
+
 
 def _create_append_only_triggers() -> None:
     dialect = op.get_bind().dialect.name
@@ -112,6 +120,11 @@ def _create_append_only_triggers() -> None:
         unchanged = "\n          ".join(
             f"OR NEW.{column} IS NOT OLD.{column}" for column in _IMMUTABLE_COLUMNS
         )
+        # Reviewed: the only interpolations are `_IMMUTABLE_COLUMNS`, a tuple of string
+        # literals in this file, and `_REFUSAL_SQL`, a constant escaped above. A
+        # migration takes no input at all. Suppressed here rather than repo-wide, so a
+        # genuinely unsafe `op.execute` added later still fails the gate.
+        # nosemgrep: sqlalchemy-execute-raw-query
         op.execute(
             f"""
             CREATE TRIGGER access_log_append_only_update
@@ -121,17 +134,22 @@ def _create_append_only_triggers() -> None:
               OR NEW.bytes IS NULL
               {unchanged}
             BEGIN
-                SELECT RAISE(ABORT, '{_REFUSAL}');
+                SELECT RAISE(ABORT, '{_REFUSAL_SQL}');
             END;
             """
         )
+        # Reviewed: the only interpolations are `_IMMUTABLE_COLUMNS`, a tuple of string
+        # literals in this file, and `_REFUSAL_SQL`, a constant escaped above. A
+        # migration takes no input at all. Suppressed here rather than repo-wide, so a
+        # genuinely unsafe `op.execute` added later still fails the gate.
+        # nosemgrep: sqlalchemy-execute-raw-query
         op.execute(
             f"""
             CREATE TRIGGER access_log_append_only_delete
             BEFORE DELETE ON access_log
             FOR EACH ROW
             BEGIN
-                SELECT RAISE(ABORT, '{_REFUSAL}');
+                SELECT RAISE(ABORT, '{_REFUSAL_SQL}');
             END;
             """
         )
@@ -141,6 +159,11 @@ def _create_append_only_triggers() -> None:
         # `candidate` is OLD with bytes swapped for the proposed value: if the row still
         # differs after that, something other than bytes was touched. No column list, so
         # nothing to keep in step with the model.
+        # Reviewed: the only interpolations are `_IMMUTABLE_COLUMNS`, a tuple of string
+        # literals in this file, and `_REFUSAL_SQL`, a constant escaped above. A
+        # migration takes no input at all. Suppressed here rather than repo-wide, so a
+        # genuinely unsafe `op.execute` added later still fails the gate.
+        # nosemgrep: sqlalchemy-execute-raw-query
         op.execute(
             f"""
             CREATE FUNCTION access_log_is_append_only() RETURNS trigger AS $$
@@ -148,15 +171,15 @@ def _create_append_only_triggers() -> None:
                 candidate access_log%ROWTYPE;
             BEGIN
                 IF TG_OP = 'DELETE' THEN
-                    RAISE EXCEPTION '{_REFUSAL} (DELETE refused)';
+                    RAISE EXCEPTION '{_REFUSAL_SQL} (DELETE refused)';
                 END IF;
                 IF OLD.bytes IS NOT NULL OR NEW.bytes IS NULL THEN
-                    RAISE EXCEPTION '{_REFUSAL} (bytes already set)';
+                    RAISE EXCEPTION '{_REFUSAL_SQL} (bytes already set)';
                 END IF;
                 candidate := OLD;
                 candidate.bytes := NEW.bytes;
                 IF ROW(NEW.*) IS DISTINCT FROM ROW(candidate.*) THEN
-                    RAISE EXCEPTION '{_REFUSAL} (another column changed)';
+                    RAISE EXCEPTION '{_REFUSAL_SQL} (another column changed)';
                 END IF;
                 RETURN NEW;
             END;
