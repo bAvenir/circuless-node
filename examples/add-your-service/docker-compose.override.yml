@@ -1,0 +1,20 @@
+# Runs your service beside the node. Copy this file to deploy/, next to docker-compose.yml.
+#
+# Compose loads docker-compose.override.yml on its own, so `docker compose up -d` starts
+# the node and your service together, on the same network. Register the service with
+# endpoint_url http://my-service:8080: the service name is its address.
+#
+# The example is the reference service's minimal.py. Replace `build` and `command` with
+# your own service, or use `image:` if you already have one.
+services:
+  my-service:
+    build: ../examples/reference-service
+    command: ["python", "minimal.py"]
+    environment:
+      # The same value goes to the node: PUT .../credential. Put it in deploy/.env.
+      REFERENCE_SERVICE_KEY: ${MY_SERVICE_KEY:?set MY_SERVICE_KEY in .env}
+    # No `ports:`. Only the node can reach the service, so the X-CIRCULess-* headers it
+    # receives are always the node's word.
+    read_only: true
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped

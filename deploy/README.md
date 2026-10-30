@@ -112,6 +112,11 @@ rm secrets/netbird.env
 It is single-use and was consumed at first start, so this is tidying rather than urgent —
 but a spent credential in a file is still a credential in a file.
 
+## Running your service beside the node
+
+Add it to this compose with an override, so only the node can reach it. See
+[`examples/add-your-service`](../examples/add-your-service).
+
 ---
 
 ## What is where

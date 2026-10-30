@@ -19,3 +19,9 @@ data/
 # Overlay deployment secrets: the NetBird setup key.
 deploy/secrets/*.env
 deploy/.env
+
+# private keys and certificates from the acting-for-a-user example (invariant 17)
+examples/acting-for-a-user/*.pem
+
+# a partner's copy of examples/add-your-service/docker-compose.override.yml
+deploy/docker-compose.override.yml
