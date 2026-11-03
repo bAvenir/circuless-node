@@ -779,3 +779,54 @@ def test_a_feed_without_hosted_changes_nothing(session: Session) -> None:
     sync.pull_sync_feed(session, FakeCloud({"org_map": [], "agreements": []}), now=NOW)
 
     assert tenants(session) == before
+
+
+def test_a_feed_without_hosted_is_told_apart_from_one_hosting_nothing(
+    session: Session,
+) -> None:
+    """The whole point of the field. Both adopt no tenants, and they mean opposite
+    things: an absent key is a Cloud too old to answer, an empty list is a Cloud
+    answering "none". Reported identically, nobody can tell a node that cannot learn
+    its tenants from a node that correctly has none."""
+    old_cloud = sync.pull_sync_feed(
+        session, FakeCloud({"org_map": [], "agreements": []}), now=NOW
+    )
+    current_cloud = sync.pull_sync_feed(session, FakeCloud(feed_with([])), now=NOW)
+
+    assert old_cloud.carried_hosted is False
+    assert current_cloud.carried_hosted is True
+    # Neither adopted anything, which is why the flag is the only thing that separates
+    # them — assert it, so a change that made one of them adopt is caught here too.
+    assert old_cloud.agreements == current_cloud.agreements == 0
+
+
+def test_the_absent_hosted_key_reaches_metrics(session: Session) -> None:
+    """`/healthz` is a status code with no body (D21), so this is the only place an
+    operator can see it. 0 rather than a missing series: an alert cannot fire on a
+    line that is not printed."""
+    state = SyncState()
+    pulled = sync.pull_sync_feed(session, FakeCloud({"org_map": [], "agreements": []}), now=NOW)
+    state.pull_succeeded(
+        agreements=pulled.agreements, now=NOW, carried_hosted=pulled.carried_hosted
+    )
+
+    assert "circuless_node_sync_feed_carries_hosted 0" in sync.metrics_text(state, now=NOW)
+
+
+def test_a_failed_pull_does_not_report_an_old_cloud() -> None:
+    """A Cloud that cannot be reached is not a Cloud that is out of date. The previous
+    answer stands rather than being overwritten by a pull that learned nothing."""
+    state = SyncState()
+    state.pull_succeeded(agreements=1, now=NOW, carried_hosted=True)
+    state.pull_failed("connection refused", now=NOW)
+
+    assert state.feed_carried_hosted is True
+    assert "circuless_node_sync_feed_carries_hosted 1" in sync.metrics_text(state, now=NOW)
+
+
+def test_before_any_pull_the_hosted_flag_is_unknown() -> None:
+    """-1, not 0. A node that has never pulled has not discovered an old Cloud; it has
+    discovered nothing, and reporting 0 would page somebody during a restart."""
+    assert "circuless_node_sync_feed_carries_hosted -1" in sync.metrics_text(
+        SyncState(), now=NOW
+    )

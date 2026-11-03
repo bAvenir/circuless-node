@@ -49,7 +49,7 @@ import datetime as dt
 import threading
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any, NamedTuple, Protocol
 
 import httpx
 from sqlmodel import Session, col, delete, select
@@ -114,9 +114,15 @@ class SyncState:
     consecutive_pull_failures: int = 0
     consecutive_push_failures: int = 0
     agreements_cached: int = 0
+    #: Did the last successful pull carry a `hosted` key at all? `None` until one has
+    #: succeeded. False means the Cloud predates the field, so this node cannot learn
+    #: which tenants it serves — distinct from a Cloud that says it serves none.
+    feed_carried_hosted: bool | None = None
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
-    def pull_succeeded(self, *, agreements: int, now: dt.datetime) -> None:
+    def pull_succeeded(
+        self, *, agreements: int, now: dt.datetime, carried_hosted: bool | None = None
+    ) -> None:
         with self._lock:
             self.last_pull_at = now
             self.last_attempt_at = now
@@ -125,6 +131,11 @@ class SyncState:
             # push that did not, and one field for both would erase the other's news.
             self.last_pull_error = None
             self.agreements_cached = agreements
+            # Only a pull that actually answered the question updates this. A failed
+            # pull leaves the previous answer standing rather than reporting a Cloud
+            # that cannot be reached as a Cloud that is out of date.
+            if carried_hosted is not None:
+                self.feed_carried_hosted = carried_hosted
 
     def push_succeeded(self, *, now: dt.datetime) -> None:
         with self._lock:
@@ -256,8 +267,10 @@ def tick(
         state.push_failed(str(failure), now=now)
 
     try:
-        agreements = pull_sync_feed(session, cloud, now=now)
-        state.pull_succeeded(agreements=agreements, now=now)
+        pulled = pull_sync_feed(session, cloud, now=now)
+        state.pull_succeeded(
+            agreements=pulled.agreements, now=now, carried_hosted=pulled.carried_hosted
+        )
     except CloudError as failure:
         state.pull_failed(str(failure), now=now)
         # No heartbeat: it says "this node completed a pass", and this one did not.
@@ -320,7 +333,20 @@ def catalogue_for(
         ]
 
 
-def pull_sync_feed(session: Session, cloud: CloudTransport, *, now: dt.datetime) -> int:
+class PullResult(NamedTuple):
+    """What one pull learned, for the metrics to report.
+
+    A plain `int` before. `carried_hosted` has to travel with the count because it is
+    a property of the feed, and `tick()` never sees the feed itself.
+    """
+
+    agreements: int
+    #: False means the Cloud sent no `hosted` key — it predates the field, so this node
+    #: cannot learn which tenants it serves. Not the same as hosting none.
+    carried_hosted: bool
+
+
+def pull_sync_feed(session: Session, cloud: CloudTransport, *, now: dt.datetime) -> PullResult:
     """Replace the org map and the agreement cache with what the Cloud sent.
 
     Replace, never merge: a revocation is an absence from the feed, and a merge would
@@ -365,13 +391,13 @@ def pull_sync_feed(session: Session, cloud: CloudTransport, *, now: dt.datetime)
                 synced_at=now,
             )
         )
-    adopt_hosted_tenants(session, feed)
+    adopted = adopt_hosted_tenants(session, feed)
 
     session.commit()
-    return len(agreements)
+    return PullResult(agreements=len(agreements), carried_hosted=adopted is not None)
 
 
-def adopt_hosted_tenants(session: Session, feed: dict[str, Any]) -> list[str]:
+def adopt_hosted_tenants(session: Session, feed: dict[str, Any]) -> list[str] | None:
     """Create a `Tenant` row for every organisation the Cloud says this node hosts.
 
     The registry is the only place that knows which tenants a node serves — an operator
@@ -398,7 +424,22 @@ def adopt_hosted_tenants(session: Session, feed: dict[str, Any]) -> list[str]:
       made-up organisation.
 
     Returns the slugs created, for the caller to report.
+
+    **A feed with no `hosted` key is not a node that hosts nothing.** The two used to
+    arrive here identically — `feed.get("hosted", [])` gave `[]` for both — and both
+    returned silently. They mean opposite things. An absent key is a Cloud older than
+    the feature: it cannot tell this node which tenants it serves, so the node can
+    never adopt one and somebody has to go and insert rows by hand, which is the
+    situation this function exists to end. An empty list is a current Cloud answering
+    the question, and the answer is "none" — correct, and unremarkable.
+
+    `None` is returned for the first and `[]` for the second, and `tick()` puts the
+    difference on `/metrics`. Not on `/healthz`: that is a status code with no body by
+    design (D21), and an old Cloud is not a reason to fail liveness.
     """
+    if "hosted" not in feed:
+        return None
+
     hosted = [slug for slug in feed.get("hosted", []) if isinstance(slug, str)]
     if not hosted:
         return []
@@ -523,5 +564,15 @@ def metrics_text(state: SyncState, *, now: dt.datetime | None = None) -> str:
         "# HELP circuless_node_agreements_cached Agreements currently enforced from cache.",
         "# TYPE circuless_node_agreements_cached gauge",
         f"circuless_node_agreements_cached {state.agreements_cached}",
+        # Separate from "hosts nothing", which is an empty list and reports 1 here.
+        # 0 means the Cloud sent no `hosted` key at all: it predates the field, so this
+        # node cannot adopt a tenant and somebody has to insert rows by hand. Worth a
+        # ticket, not a page — nothing already working stops.
+        "# HELP circuless_node_sync_feed_carries_hosted 1 if the last successful pull "
+        "carried a hosted key, 0 if the Cloud is too old to send one, -1 if no pull has "
+        "succeeded yet.",
+        "# TYPE circuless_node_sync_feed_carries_hosted gauge",
+        f"circuless_node_sync_feed_carries_hosted "
+        f"{-1 if state.feed_carried_hosted is None else int(state.feed_carried_hosted)}",
     ]
     return "\n".join(lines) + "\n"
