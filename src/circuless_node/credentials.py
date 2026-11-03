@@ -365,6 +365,16 @@ def credential_router() -> APIRouter:
         resource_id: uuid.UUID,
         subject: Subject = Depends(require_subject),
     ) -> Response:
+        """Delete the upstream credential. Admins only, as with setting it.
+
+        The service stays registered and callers keep their agreements; what stops
+        is the node's ability to authenticate upstream, so invocations fail at the
+        upstream rather than being refused here. Removing a credential is therefore
+        not a way to withdraw a service — `DELETE` on the resource is.
+
+        404 if none is set, rather than a silent 204: "there was nothing to remove"
+        and "I removed it" are different answers to someone rotating secrets.
+        """
         with Session(request.app.state.engine) as session:
             tenant = authorised_tenant(
                 request,

@@ -433,7 +433,7 @@
   },
   "info": {
     "title": "CIRCULess Node",
-    "version": "0.5.2"
+    "version": "0.5.4"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -602,6 +602,7 @@
         "summary": "List Resources"
       },
       "post": {
+        "description": "Register a dataset or a service in this tenant. Defaults closed.\n\nOmit `discoverability` and `visibility` and you get `hidden` and `org`:\nnothing is published by forgetting to say it should not be. Publishing is\na second, deliberate call.\n\nThree guards refuse rather than correct. A licence from the controlled list\nis required before anything may reach the catalogue, because a record a\nconsumer cannot act on wastes both parties' time. A Bavenir-operated node\nrefuses a resource classified `sensitive` \u2014 not because this node is less\nsecure, but because Bavenir holding a partner's sensitive data is an\narrangement the project undertook not to make. And a service must bring\nboth an endpoint and an invoke policy, since the node cannot guess a\ntimeout it will be held to.\n\n`slug` is unique per tenant; a repeat is a 409 rather than an overwrite.",
         "operationId": "post_v1_t_tenant_slug_resources",
         "parameters": [
           {
@@ -703,6 +704,7 @@
         "summary": "Withdraw Resource"
       },
       "get": {
+        "description": "One resource in full, for a caller who may manage it.\n\nThe management view, not the catalogue's: it shows what the owner needs to\nadminister the resource, including a service's upstream URL. A consumer\nholding that URL could reach the service directly, past the decision, the\nagreement and the log \u2014 which is why the catalogue record never carries it\nand this route is not the one consumers use.",
         "operationId": "get_v1_t_tenant_slug_resources_resource_id",
         "parameters": [
           {
@@ -752,6 +754,7 @@
         "summary": "Read Resource"
       },
       "patch": {
+        "description": "Change a resource. Send only the fields you are changing.\n\nEvery guard from registration is re-checked **against the resulting state,\nnot against what you sent**. Raising discoverability has to satisfy the\nlicence rule using the licence already stored, and clearing a licence has\nto satisfy it against the discoverability already stored. A patch cannot\nreach a state that registration would have refused.\n\nA withdrawn resource is a 409: it is on its way out, and editing it would\nsuggest otherwise.",
         "operationId": "patch_v1_t_tenant_slug_resources_resource_id",
         "parameters": [
           {
@@ -813,6 +816,7 @@
     },
     "/v1/t/{tenant_slug}/resources/{resource_id}/credential": {
       "delete": {
+        "description": "Delete the upstream credential. Admins only, as with setting it.\n\nThe service stays registered and callers keep their agreements; what stops\nis the node's ability to authenticate upstream, so invocations fail at the\nupstream rather than being refused here. Removing a credential is therefore\nnot a way to withdraw a service \u2014 `DELETE` on the resource is.\n\n404 if none is set, rather than a silent 204: \"there was nothing to remove\"\nand \"I removed it\" are different answers to someone rotating secrets.",
         "operationId": "delete_v1_t_tenant_slug_resources_resource_id_credential",
         "parameters": [
           {
@@ -1179,6 +1183,7 @@
     },
     "/v1/t/{tenant_slug}/resources/{resource_id}/invoke/{upstream_path}": {
       "delete": {
+        "description": "Call a registered service through the node, under the same decision as a read.\n\nThe node strips what you sent \u2014 `authorization`, cookies, the host,\nhop-by-hop headers and any inbound `X-CIRCULess-*`, so a caller cannot\nforge an identity \u2014 then attaches the organisation's own credential and\nthe headers naming the subject, organisation, resource and request. You\nnever see the credential, and the service never sees your token.\n\nRedirects back into the registered endpoint are rewritten to this node's\naddress; a redirect anywhere else is refused, because following it would\ntake you out from behind the decision and the log. Responses stream\nunbuffered, and a `202` is passed through untouched \u2014 the node holds no\njob state, so polling a long-running job is between you and the service.\n\nThe upstream's own error body is passed through here and nowhere else.",
         "operationId": "delete_v1_t_tenant_slug_resources_resource_id_invoke_upstream_path",
         "parameters": [
           {
@@ -1233,6 +1238,7 @@
         "summary": "Invoke"
       },
       "get": {
+        "description": "Call a registered service through the node, under the same decision as a read.\n\nThe node strips what you sent \u2014 `authorization`, cookies, the host,\nhop-by-hop headers and any inbound `X-CIRCULess-*`, so a caller cannot\nforge an identity \u2014 then attaches the organisation's own credential and\nthe headers naming the subject, organisation, resource and request. You\nnever see the credential, and the service never sees your token.\n\nRedirects back into the registered endpoint are rewritten to this node's\naddress; a redirect anywhere else is refused, because following it would\ntake you out from behind the decision and the log. Responses stream\nunbuffered, and a `202` is passed through untouched \u2014 the node holds no\njob state, so polling a long-running job is between you and the service.\n\nThe upstream's own error body is passed through here and nowhere else.",
         "operationId": "get_v1_t_tenant_slug_resources_resource_id_invoke_upstream_path",
         "parameters": [
           {
@@ -1287,6 +1293,7 @@
         "summary": "Invoke"
       },
       "head": {
+        "description": "Call a registered service through the node, under the same decision as a read.\n\nThe node strips what you sent \u2014 `authorization`, cookies, the host,\nhop-by-hop headers and any inbound `X-CIRCULess-*`, so a caller cannot\nforge an identity \u2014 then attaches the organisation's own credential and\nthe headers naming the subject, organisation, resource and request. You\nnever see the credential, and the service never sees your token.\n\nRedirects back into the registered endpoint are rewritten to this node's\naddress; a redirect anywhere else is refused, because following it would\ntake you out from behind the decision and the log. Responses stream\nunbuffered, and a `202` is passed through untouched \u2014 the node holds no\njob state, so polling a long-running job is between you and the service.\n\nThe upstream's own error body is passed through here and nowhere else.",
         "operationId": "head_v1_t_tenant_slug_resources_resource_id_invoke_upstream_path",
         "parameters": [
           {
@@ -1341,6 +1348,7 @@
         "summary": "Invoke"
       },
       "options": {
+        "description": "Call a registered service through the node, under the same decision as a read.\n\nThe node strips what you sent \u2014 `authorization`, cookies, the host,\nhop-by-hop headers and any inbound `X-CIRCULess-*`, so a caller cannot\nforge an identity \u2014 then attaches the organisation's own credential and\nthe headers naming the subject, organisation, resource and request. You\nnever see the credential, and the service never sees your token.\n\nRedirects back into the registered endpoint are rewritten to this node's\naddress; a redirect anywhere else is refused, because following it would\ntake you out from behind the decision and the log. Responses stream\nunbuffered, and a `202` is passed through untouched \u2014 the node holds no\njob state, so polling a long-running job is between you and the service.\n\nThe upstream's own error body is passed through here and nowhere else.",
         "operationId": "options_v1_t_tenant_slug_resources_resource_id_invoke_upstream_path",
         "parameters": [
           {
@@ -1395,6 +1403,7 @@
         "summary": "Invoke"
       },
       "patch": {
+        "description": "Call a registered service through the node, under the same decision as a read.\n\nThe node strips what you sent \u2014 `authorization`, cookies, the host,\nhop-by-hop headers and any inbound `X-CIRCULess-*`, so a caller cannot\nforge an identity \u2014 then attaches the organisation's own credential and\nthe headers naming the subject, organisation, resource and request. You\nnever see the credential, and the service never sees your token.\n\nRedirects back into the registered endpoint are rewritten to this node's\naddress; a redirect anywhere else is refused, because following it would\ntake you out from behind the decision and the log. Responses stream\nunbuffered, and a `202` is passed through untouched \u2014 the node holds no\njob state, so polling a long-running job is between you and the service.\n\nThe upstream's own error body is passed through here and nowhere else.",
         "operationId": "patch_v1_t_tenant_slug_resources_resource_id_invoke_upstream_path",
         "parameters": [
           {
@@ -1449,6 +1458,7 @@
         "summary": "Invoke"
       },
       "post": {
+        "description": "Call a registered service through the node, under the same decision as a read.\n\nThe node strips what you sent \u2014 `authorization`, cookies, the host,\nhop-by-hop headers and any inbound `X-CIRCULess-*`, so a caller cannot\nforge an identity \u2014 then attaches the organisation's own credential and\nthe headers naming the subject, organisation, resource and request. You\nnever see the credential, and the service never sees your token.\n\nRedirects back into the registered endpoint are rewritten to this node's\naddress; a redirect anywhere else is refused, because following it would\ntake you out from behind the decision and the log. Responses stream\nunbuffered, and a `202` is passed through untouched \u2014 the node holds no\njob state, so polling a long-running job is between you and the service.\n\nThe upstream's own error body is passed through here and nowhere else.",
         "operationId": "post_v1_t_tenant_slug_resources_resource_id_invoke_upstream_path",
         "parameters": [
           {
@@ -1503,6 +1513,7 @@
         "summary": "Invoke"
       },
       "put": {
+        "description": "Call a registered service through the node, under the same decision as a read.\n\nThe node strips what you sent \u2014 `authorization`, cookies, the host,\nhop-by-hop headers and any inbound `X-CIRCULess-*`, so a caller cannot\nforge an identity \u2014 then attaches the organisation's own credential and\nthe headers naming the subject, organisation, resource and request. You\nnever see the credential, and the service never sees your token.\n\nRedirects back into the registered endpoint are rewritten to this node's\naddress; a redirect anywhere else is refused, because following it would\ntake you out from behind the decision and the log. Responses stream\nunbuffered, and a `202` is passed through untouched \u2014 the node holds no\njob state, so polling a long-running job is between you and the service.\n\nThe upstream's own error body is passed through here and nowhere else.",
         "operationId": "put_v1_t_tenant_slug_resources_resource_id_invoke_upstream_path",
         "parameters": [
           {

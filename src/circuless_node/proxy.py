@@ -144,6 +144,22 @@ def proxy_router() -> APIRouter:
         subject: Subject = Depends(require_subject),
         requested_org: str | None = Depends(requested_acting_org),
     ) -> StreamingResponse:
+        """Call a registered service through the node, under the same decision as a read.
+
+        The node strips what you sent — `authorization`, cookies, the host,
+        hop-by-hop headers and any inbound `X-CIRCULess-*`, so a caller cannot
+        forge an identity — then attaches the organisation's own credential and
+        the headers naming the subject, organisation, resource and request. You
+        never see the credential, and the service never sees your token.
+
+        Redirects back into the registered endpoint are rewritten to this node's
+        address; a redirect anywhere else is refused, because following it would
+        take you out from behind the decision and the log. Responses stream
+        unbuffered, and a `202` is passed through untouched — the node holds no
+        job state, so polling a long-running job is between you and the service.
+
+        The upstream's own error body is passed through here and nowhere else.
+        """
         decided = _authorised(request, subject, tenant_slug, resource_id, requested_org)
         return await _relay(request, subject, decided, upstream_path)
 

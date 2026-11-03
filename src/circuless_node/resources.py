@@ -190,12 +190,28 @@ def resource_router() -> APIRouter:
         body: ResourceIn,
         subject: Subject = Depends(require_subject),
     ) -> dict:
+        """Register a dataset or a service in this tenant. Defaults closed.
+
+        Omit `discoverability` and `visibility` and you get `hidden` and `org`:
+        nothing is published by forgetting to say it should not be. Publishing is
+        a second, deliberate call.
+
+        Three guards refuse rather than correct. A licence from the controlled list
+        is required before anything may reach the catalogue, because a record a
+        consumer cannot act on wastes both parties' time. A Bavenir-operated node
+        refuses a resource classified `sensitive` — not because this node is less
+        secure, but because Bavenir holding a partner's sensitive data is an
+        arrangement the project undertook not to make. And a service must bring
+        both an endpoint and an invoke policy, since the node cannot guess a
+        timeout it will be held to.
+
+        `slug` is unique per tenant; a repeat is a 409 rather than an overwrite.
+        """
         settings: Settings = request.app.state.settings
         with Session(request.app.state.engine) as session:
             tenant = authorised_tenant(
                 request, session, subject, tenant_slug, ManagementAction.RESOURCE_REGISTER
             ).tenant
-
             discoverability = body.discoverability or Discoverability.HIDDEN
             visibility = body.visibility or Visibility.ORG
             _check_classification(settings, body.classification)
@@ -260,6 +276,14 @@ def resource_router() -> APIRouter:
         resource_id: uuid.UUID,
         subject: Subject = Depends(require_subject),
     ) -> dict:
+        """One resource in full, for a caller who may manage it.
+
+        The management view, not the catalogue's: it shows what the owner needs to
+        administer the resource, including a service's upstream URL. A consumer
+        holding that URL could reach the service directly, past the decision, the
+        agreement and the log — which is why the catalogue record never carries it
+        and this route is not the one consumers use.
+        """
         with Session(request.app.state.engine) as session:
             tenant = authorised_tenant(
                 request,
@@ -280,6 +304,17 @@ def resource_router() -> APIRouter:
         body: ResourcePatch,
         subject: Subject = Depends(require_subject),
     ) -> dict:
+        """Change a resource. Send only the fields you are changing.
+
+        Every guard from registration is re-checked **against the resulting state,
+        not against what you sent**. Raising discoverability has to satisfy the
+        licence rule using the licence already stored, and clearing a licence has
+        to satisfy it against the discoverability already stored. A patch cannot
+        reach a state that registration would have refused.
+
+        A withdrawn resource is a 409: it is on its way out, and editing it would
+        suggest otherwise.
+        """
         settings: Settings = request.app.state.settings
         with Session(request.app.state.engine) as session:
             tenant = authorised_tenant(
