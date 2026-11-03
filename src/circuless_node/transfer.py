@@ -32,9 +32,14 @@ reason.
 ## No Range support in the beta
 
 `Accept-Ranges: none`, always 200, always the whole file. Range was considered and
-dropped: the single-range case is cheap but nothing in the acceptance set needs it, and
-the deciding argument was that resumable downloads are an optimisation while every line
-here is security-relevant surface. Adding it later is backwards compatible.
+dropped: the deciding argument was that resumable downloads are an optimisation while
+every line here is security-relevant surface. Adding it later is backwards compatible.
+
+**Corrected 3 Nov 2026.** This paragraph used to say "nothing in the acceptance set
+needs it". That was wrong: acceptance case T14 asked for a `206` from a byte range, and
+had done since the case list was written. The case has been amended and the Range gap
+recorded as a deviation in `circuless-cloud/deploy/acceptance/RUN-SHEET.md`. The
+decision stands; only its justification was false.
 
 The one thing worth remembering if it is added: Range must be parsed **after** the
 decision and the log write, because a `416` carries `Content-Range: bytes * /size` and

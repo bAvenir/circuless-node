@@ -17,7 +17,7 @@ everything below.
 |---|---|---|---|
 | Signed commits and signed release tags | SR-6.1.4, H1 | after the beta | **recommended for the beta** — enforce after it |
 | Branch protection with one required review | SR-4.3.5, H1 | after the beta | **recommended for the beta**; mandatory once a second developer joins |
-| Server-sent events demonstrated against a real client | N9, invariant 10 | 23 Oct 2026 | **not demonstrated** |
+| Server-sent events demonstrated against a real client | N9, invariant 10, T20 | — | **deviation** (J, 3 Nov 2026) — not demonstrated for the beta |
 | The reference service in place of the named pilot services | X3, X4 | — | **deviation**, accepted |
 
 ## Signed commits and tags
@@ -56,6 +56,19 @@ under `deferred`, and printed by `kc.py verify`.
 
 
 ## Server-sent events — supported, not demonstrated
+
+> **Reclassified 3 November 2026 (J): a deviation, not a deferral.** It had carried a
+> due date of 23 October and sat unmoved. Acceptance case **T20** is the case that would
+> have demonstrated it, and T20 is now recorded as not run in
+> `circuless-cloud/deploy/acceptance/RUN-SHEET.md` for this reason.
+>
+> What is missing is a demonstration, not the capability: the proxy returns a
+> `StreamingResponse` and the gateway is required by cloud invariant 17 to stream
+> unbuffered. Neither is evidence. Nothing in either repository exercises an SSE
+> endpoint — the reference service has none, and no test asserts that a first event
+> arrives before a stream completes. Closing it needs an SSE endpoint on the reference
+> service and a client that measures arrival order, which is the work, not the
+> verification.
 
 Not a missing control and not a deferred one: the node implements it. `invoke` relays a
 streaming response unbuffered and forwards `Mcp-Session-Id`, `Mcp-Protocol-Version` and
