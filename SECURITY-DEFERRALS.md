@@ -8,10 +8,15 @@ Implementation plan §8: by the security validation, every mandatory requirement
 **verified**, or **covered by an exception J has accepted in writing**. Both apply to
 everything below.
 
+> **Reclassified 2 November 2026 (J).** The first two rows — SR-6.1.4 and SR-4.3.5 — are
+> now **recommended for the beta and enforced from the first release after it**, rather
+> than mandatory and due 4 November. Their rows stay here because they are still open and
+> CI prints this file on every run. The other two rows are unaffected.
+
 | Control | Requirement | Due | Status |
 |---|---|---|---|
-| Signed commits and signed release tags | SR-4.3.x, H1 | 4 Nov 2026 | deferred |
-| Branch protection with one required review | H1 | 4 Nov 2026 | deferred |
+| Signed commits and signed release tags | SR-6.1.4, H1 | after the beta | **recommended for the beta** — enforce after it |
+| Branch protection with one required review | SR-4.3.5, H1 | after the beta | **recommended for the beta**; mandatory once a second developer joins |
 | Server-sent events demonstrated against a real client | N9, invariant 10 | 23 Oct 2026 | **not demonstrated** |
 | The reference service in place of the named pilot services | X3, X4 | — | **deviation**, accepted |
 
@@ -22,7 +27,9 @@ enforcement would have to start from a baseline anyway. Setting it up needs a ke
 registered against a GitHub account — a step for a person, not for CI.
 
 **What it costs.** Half of M1's exit criterion *"CI fails on … an unsigned commit"*. The
-other half — planted secrets, critical CVEs, unauthenticated routes — is enforced.
+other half — planted secrets, critical CVEs, unauthenticated routes — is enforced. Since
+2 November that half is **out of scope for the beta by decision** rather than
+outstanding; the implementation plan's checklist records it the same way.
 
 **What closing it looks like.** Set `commit.gpgsign`, `tag.gpgsign`, `gpg.format=ssh` and
 `user.signingkey`; register the public key on GitHub as a *signing* key. `bvr-ci` needs no
