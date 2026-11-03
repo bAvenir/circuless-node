@@ -494,14 +494,22 @@ def test_a_private_upstream_address_is_permitted(
     """Every other test of the guard asserts a refusal, and a guard that refused
     everything would pass all of them. The whole scenario runs against a service on a
     private address, which is the case the guard must *allow* — partner services live on
-    private networks, and D20 puts them there deliberately."""
+    private networks, and D20 puts them there deliberately.
+
+    This asserted a 422 first and a 200 second, from two identical requests, which
+    cannot both be right. The 422 pair was copied from
+    `test_the_same_service_on_loopback_would_be_refused` below and never removed; the
+    module skips wherever this machine cannot reach itself on a non-loopback address,
+    so it only ran on Linux, where it had been failing since 22 October 2026.
+
+    The body is checked rather than the status alone. A 200 proves the node did not
+    refuse; only the upstream's own answer proves the request reached the service on
+    that private address, which is the thing being permitted."""
     grant_invoke(app)
-    refused = client.post(invoke_url(app, "headers"), headers=alpha_user, content=CSV)
-    assert refused.status_code == 422
-    assert "internal socket" in refused.text
-    assert (
-        client.post(invoke_url(app, "headers"), headers=alpha_user, content=CSV).status_code == 200
-    )
+    permitted = client.post(invoke_url(app, "headers"), headers=alpha_user, content=CSV)
+
+    assert permitted.status_code == 200, permitted.text
+    assert permitted.json() == {"columns": COLUMNS, "count": 3}
 
 
 def test_the_same_service_on_loopback_would_be_refused(
