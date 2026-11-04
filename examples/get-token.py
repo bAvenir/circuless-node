@@ -48,6 +48,7 @@ import webbrowser
 #: Registered on `circuless-ui` in realm-config.json. Changing it needs a realm change.
 REDIRECT_PORT = 5173
 
+
 def http_open(request, timeout: int = 30):
     """`urlopen`, with the scheme checked first.
 
@@ -100,7 +101,6 @@ def claims_of(token: str) -> dict:
     payload = token.split(".")[1]
     payload += "=" * (-len(payload) % 4)
     return json.loads(base64.urlsafe_b64decode(payload))
-
 
 
 def warnings_for(claims: dict) -> list[str]:

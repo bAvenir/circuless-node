@@ -788,9 +788,7 @@ def test_a_feed_without_hosted_is_told_apart_from_one_hosting_nothing(
     things: an absent key is a Cloud too old to answer, an empty list is a Cloud
     answering "none". Reported identically, nobody can tell a node that cannot learn
     its tenants from a node that correctly has none."""
-    old_cloud = sync.pull_sync_feed(
-        session, FakeCloud({"org_map": [], "agreements": []}), now=NOW
-    )
+    old_cloud = sync.pull_sync_feed(session, FakeCloud({"org_map": [], "agreements": []}), now=NOW)
     current_cloud = sync.pull_sync_feed(session, FakeCloud(feed_with([])), now=NOW)
 
     assert old_cloud.carried_hosted is False
@@ -827,6 +825,4 @@ def test_a_failed_pull_does_not_report_an_old_cloud() -> None:
 def test_before_any_pull_the_hosted_flag_is_unknown() -> None:
     """-1, not 0. A node that has never pulled has not discovered an old Cloud; it has
     discovered nothing, and reporting 0 would page somebody during a restart."""
-    assert "circuless_node_sync_feed_carries_hosted -1" in sync.metrics_text(
-        SyncState(), now=NOW
-    )
+    assert "circuless_node_sync_feed_carries_hosted -1" in sync.metrics_text(SyncState(), now=NOW)
