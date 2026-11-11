@@ -23,6 +23,8 @@ There is no Range support. The node sends Accept-Ranges: none and always returns
 
 Paths are confined: the request path is normalised and then refused if it climbs out with .., is absolute, or looks like a URL. Storage resolves everything against the tenant's directory and refuses anything that escapes it.
 
+Paths are confined: the request path is normalised and then refused if it climbs out with `..`, is absolute, or looks like a URL. Storage resolves everything against the tenant's directory and refuses anything that escapes it.
+
 Deletion is two-stage. Withdrawing marks the resource so the decision function refuses it and the catalogue record is withdrawn at once; the bytes go later.
 
 ## Relationships

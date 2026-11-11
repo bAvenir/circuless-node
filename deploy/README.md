@@ -175,7 +175,7 @@ platform's own routes and DNS away from CIRCULess peers — is in the `circuless
 repository at `deploy/netbird/POLICIES.md`.
 
 The operator's step-by-step for the whole enrolment, which interleaves with this guide,
-is `circuless-cloud/deploy/DEPLOYMENT.md` under *Adding a node, end to end*. Two things
+is `circuless-cloud/deploy/TUTORIAL.md`, in its Reference half. Two things
 from it are worth knowing on this side:
 
 **The address the operator needs is your overlay address**, `http://100.x.y.z:8000` —
