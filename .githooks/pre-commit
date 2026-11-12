@@ -34,3 +34,32 @@ else
   echo "WARNING: neither gitleaks nor Docker is available — staged changes were NOT" >&2
   echo "         scanned for secrets. CI will still scan the full history." >&2
 fi
+
+# --- the committed OpenAPI document ---------------------------------------------------
+#
+# `openapi.json` is generated from the code and committed, and a CI test fails when the
+# two disagree. The document embeds the package version, so **every release breaks that
+# test**: `bvr-ci patch` bumps `pyproject.toml` and commits, and nothing regenerates the
+# schema. It happened at v0.5.4, v0.6.0 and v0.6.1, twice leaving the node's whole suite
+# red — the drift check runs before the tests, so it hides whatever else is wrong.
+#
+# Regenerated here rather than merely reported: the fix is mechanical and has no decision
+# in it, and a hook that only complains is one people learn to pass with --no-verify. The
+# file joins the commit that caused it to change, which is where it belongs.
+if git diff --cached --name-only | grep -qE '^(src/circuless_node/|pyproject\.toml$)'; then
+  if command -v uv >/dev/null 2>&1; then
+    before=$(git hash-object openapi.json 2>/dev/null || echo none)
+    if uv run --quiet circuless-node-openapi >/dev/null 2>&1; then
+      after=$(git hash-object openapi.json)
+      if [ "$before" != "$after" ]; then
+        git add openapi.json
+        echo "openapi.json was out of date; regenerated and added to this commit." >&2
+      fi
+    else
+      echo "WARNING: could not regenerate openapi.json. If this commit changes the API" >&2
+      echo "         or the version, CI will fail on the drift check." >&2
+    fi
+  else
+    echo "WARNING: uv not found — openapi.json was NOT checked against the code." >&2
+  fi
+fi
