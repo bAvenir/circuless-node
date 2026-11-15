@@ -146,7 +146,7 @@ ANY    /v1/t/{tenant}/resources/{id}/invoke/{path} proxied service call
   - `decide()` gets exhaustive table tests: every visibility × principal type × agreement state × time boundary, plus `withdrawn`.
   - Integration tests run against a **real Keycloak in Docker Compose**, never a mocked JWT issuer.
   - Security-critical acceptance cases (T02–T04, T07, T08, T11, T13, T17, T19, T23, T25, T28, T32, T34) must never be skipped.
-- **Git.** BVR's CI tool enforces branch naming, commit messages and tags. Commits are **signed** (SSH signing). `main` is protected: one required review, no direct pushes.
+- **Git.** BVR's CI tool enforces branch naming, commit messages and tags — that is in place. Commits are **intended** to be signed (SSH signing), and `main` **intended** to be protected: one required review, no direct pushes. **Not yet true, and recorded as such** (12 Nov 2026): `main` carries no protection rule on any repository, and the history is unsigned. Both are recommended for the beta rather than mandatory (SR-4.3.5, SR-6.1.4), and they are in `SECURITY-DEFERRALS.md`. This line described the intent as if it were the state.
 - **Dependencies.** Pinned in `uv.lock`, images pinned by digest. A new dependency needs a one-line reason in the PR (SR-6.1.2). Prefer the standard library and the stack above.
 - **Before calling a task done:** tests green, the route-auth test green, and no new unauthenticated or un-versioned route.
 - Keep it small. The node is a dozen-odd endpoints and one decision function. Resist frameworks and abstractions it does not need.

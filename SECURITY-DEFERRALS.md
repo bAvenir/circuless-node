@@ -13,6 +13,18 @@ everything below.
 > than mandatory and due 4 November. Their rows stay here because they are still open and
 > CI prints this file on every run. The other two rows are unaffected.
 
+> **Accepted as exceptions, 12 November 2026 (J).** Both rows — SR-6.1.4 and SR-4.3.5 —
+> are now covered by a written exception under the implementation plan's §8. The
+> reasoning is in `compliance-assessment.md`: one developer builds the beta, so a
+> required review means self-approval through a second account, and the history is
+> unsigned so enforcement would start from an unsigned baseline either way.
+>
+> **No branch protection rule exists on this repository.** Checked against GitHub on
+> 12 November rather than assumed, and `CLAUDE.md` claimed otherwise until that day.
+> Blocking force-pushes was considered separately from the required review and deferred
+> the same day. The rows stay here: the work is still intended, and this file is what
+> keeps that visible.
+
 | Control | Requirement | Due | Status |
 |---|---|---|---|
 | Signed commits and signed release tags | SR-6.1.4, H1 | after the beta | **recommended for the beta** — enforce after it |
