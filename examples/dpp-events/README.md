@@ -1,58 +1,167 @@
-# `svc-dpp` → `POST /v1/events`
+# Connecting the DPP to CIRCULess
 
-A worked path for one specific integration: the **DPP** pushes an event into the
-**DPP_Adapter** service, which runs behind the node and is reached only through it.
+The **DPP Adapter** is a CIRCULess service that receives events from the DPP and hands
+them to Workflows exactly once per acknowledgement. This is how the DPP reaches it.
 
 Everything here is an instance of [`INTEGRATING-A-SERVICE.md`](../../INTEGRATING-A-SERVICE.md)
 — §8 for the registration, §11 pattern B for the token. Nothing below is a special case;
 if it reads like one, something has been set up wrong.
 
-## The one thing to understand first
+## Two paths, and you are on the first
 
-**The DPP does not call `/v1/events`.** There is no such route on a node. It calls:
+The DPP publishes to the **same route, with the same body, for the same answers**, either
+way. Only the address and the credential differ:
 
-```
-POST https://$NODE_HOST/v1/t/$TENANT/resources/$RESOURCE/invoke/events
-```
+| | address | credential | available |
+|---|---|---|---|
+| **A — direct** | `https://$INGEST_HOST/v1/events` | a fixed bearer token | now |
+| **B — through a node** | `https://$NODE_HOST/v1/t/$TENANT/resources/$RESOURCE/invoke/events` | an OAuth token the DPP mints itself | once `svc-dpp` exists in the realm |
 
-and the node forwards it to `$ENDPOINT_URL/events`. With the adapter registered at
-`http://dpp-adapter:8000/v1`, that lands on the adapter's own `POST /v1/events` — which
-is the path the adapter's OpenAPI document declares and the only one it needs to know
-about. The node's prefix is the node's business.
+**Start with A.** It exists so integration can begin before the identity work is done,
+and moving to B later is a change of base URL and `Authorization` header in the DPP's
+client — nothing else.
 
-Every one of those calls is an authorization decision and an access-log entry. That is
-the whole reason for routing the DPP through a node rather than giving it the adapter's
-address.
+Be clear-eyed about what A costs while it lasts: it bypasses the node, so those pushes
+appear in **no access log**, no agreement governs them, and the token has no expiry. That
+is a deliberate, temporary trade, not the design.
+
+Part 1 is needed for both. Part 2 is path A. Part 3 is path B.
 
 ## Settings used throughout
 
 ```sh
-NODE_ID=bvr-node                                    # see the note below
-NODE_HOST=$NODE_ID.nodes.circuless.bavenir.eu
-KEYCLOAK=https://auth.circuless.bavenir.eu                 # kc.py takes this
-ISSUER=$KEYCLOAK/realms/circuless                          # the DPP takes this
+NODE_ID=bvr-cloud                                   # the node hosting the adapter
+NODE_HOST=$NODE_ID.nodes.<your-domain>
+INGEST_HOST=dpp-ingest.<your-domain>                # path A only
+ISSUER=https://auth.<your-domain>/realms/circuless
 TENANT=bvr                                          # the tenant that owns the adapter
 ```
 
-> `deploy/keycloak/realm-config.json` in `circuless-cloud` currently declares four nodes —
-> `bvr-cloud`, `alpha-onprem`, `jozef-node`, `ltu-node`. If the node hosting the adapter is
-> one of those rather than a newly enrolled `bvr-node`, substitute its id everywhere; the
-> audience string and the hostname both derive from it.
+> `NODE_ID` is a placeholder. Substitute the node that actually hosts the adapter — the
+> hostname and the token audience both derive from it, so getting it wrong fails twice
+> and in two different ways.
 
 ---
 
-# Part 1 — the platform operator, once
+# Part 1 — the organisation running the adapter
 
-## 1.1 Declare the client
+## 1.1 Run the adapter beside the node
 
-Add to `clients` in `circuless-cloud/deploy/keycloak/realm-config.json`, modelled on
-`svc-workflows`:
+[`../add-your-service`](../add-your-service) is the pattern. The adapter's node-facing
+container gets **no host port**: nothing but the node can reach it, which is why it may
+trust the `X-CIRCULess-*` headers at all.
+
+Its published container — path A — is the one exception, and it serves exactly one route.
+
+## 1.2 Register it as a service resource
+
+The adapter ships `deploy/register-on-node.sh`, which does this and the credential below:
+
+```sh
+NODE=https://$NODE_HOST TENANT=$TENANT TOKEN=<a token for this node> \
+  ./deploy/register-on-node.sh
+```
+
+It prints the resource id. Keep it: that is `$RESOURCE`, and path B needs it.
+
+By hand, the same call is:
+
+```sh
+curl -sX POST https://$NODE_HOST/v1/t/$TENANT/resources \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"slug":"dpp-adapter","kind":"service","title":"DPP Adapter",
+       "theme":"value-chain","classification":"non-sensitive",
+       "visibility":"agreement","discoverability":"hidden",
+       "endpoint_url":"http://dpp-adapter:8000/v1",
+       "invoke_policy":{"idempotent_methods":["GET","POST"],"timeout_s":30}}'
+```
+
+- `endpoint_url` carries the `/v1`, so the adapter's own paths stay as it publishes them.
+  Without it, `invoke/events` would reach `/events`, which the adapter does not serve.
+- `visibility: agreement` because the DPP is a different organisation, so an agreement
+  governs the access and can be revoked. Use `org` only if every caller belongs to the
+  organisation owning this tenant — convenient, and worth being deliberate about, since
+  there is then nothing to revoke.
+- `discoverability: hidden`: this is plumbing between named parties, not a catalogue entry.
+- `idempotent_methods` is an **allowlist of methods, not a retry list** — the node never
+  retries. `GET, POST` is all this adapter needs; leaving the others out means a caller
+  cannot reach them even by guessing a path.
+- Loopback, `0.0.0.0` and link-local are refused at registration and again on every call.
+  A container name on the node's private network is the intended shape.
+
+**This one resource serves three routes.** `POST invoke/events` is the DPP's. Workflows
+also uses `GET invoke/events` to lease events and `POST invoke/events/ack` to acknowledge
+them. The node cannot tell them apart — its decision is per resource and per action, so
+everyone permitted to `invoke` can reach all three — and the adapter is what keeps the
+DPP to publishing and Workflows to consuming.
+
+## 1.3 Give the node the adapter's key
+
+```sh
+curl -sX PUT https://$NODE_HOST/v1/t/$TENANT/resources/$RESOURCE/credential \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"scheme":"header","header_name":"X-API-Key","secret":"<the adapter's node key>"}'
+```
+
+`X-API-Key` is the header the adapter checks, and the same value it reads from its own
+`DPP_ADAPTER_NODE_KEY_FILE`. A mismatch means the node calls with a credential the adapter
+ignores, and every call is refused with a `401` that looks like a node fault.
+
+Stored encrypted, returned by no interface afterwards (invariant 11). To change it, set a
+new one.
+
+## 1.4 Permit the DPP, and tell the adapter who it is
+
+**Two separate permissions**, and both are needed:
+
+**An agreement on the node**, from `$TENANT` to the DPP's organisation, on this resource,
+action **`invoke`**. One granting `read` instead refuses with `no_agreement` — which reads
+like no agreement at all rather than like the wrong action.
+
+**The adapter's own allowlist**, `DPP_ADAPTER_PUBLISHERS=svc-dpp`. Default deny: without
+it the DPP is refused with `actor_not_permitted` even holding a perfectly good token and a
+valid agreement. Workflows goes in `DPP_ADAPTER_CONSUMERS` and nowhere else.
+
+---
+
+# Part 2 — the DPP, today
+
+Hand this part over with three values: `$INGEST_HOST`, the bearer token, and the event
+contract below.
+
+```sh
+curl -sX POST https://$INGEST_HOST/v1/events \
+  -H "Authorization: Bearer $INGEST_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"id":"dpp-evt-0001","type":"dpp.invoice.updated",
+       "occurred_at":"2026-11-15T10:00:00Z","payload":{}}'
+```
+
+That is the whole integration. The adapter also serves its own schema at
+`https://$INGEST_HOST/v1/openapi.json`, with no credential — that document is the
+authority, and this one is a description of it.
+
+The token is a fixed string with no expiry and no scope. Rotating it does not need a
+restart, but write the new value to a temporary file and `rename` it into place: a
+truncate-then-write leaves a window in which the file is empty, and an empty secret is
+refused, so every push in that window fails.
+
+---
+
+# Part 3 — the DPP, through a node
+
+Same route, same body, same answers. What changes is who vouches for the caller.
+
+## 3.1 The operator declares the client
+
+Add `svc-dpp` to `clients` in `circuless-cloud/deploy/keycloak/realm-config.json`,
+modelled on `svc-workflows`:
 
 ```json
 {
   "clientId": "svc-dpp",
   "name": "DPP event publisher",
-  "description": "The DPP, as a service principal. Pushes events to the DPP_Adapter behind a node; pattern B only.",
+  "description": "The DPP, as a service principal. Publishes to the DPP Adapter; pattern B only.",
   "enabled": true,
   "publicClient": false,
   "standardFlowEnabled": false,
@@ -74,98 +183,19 @@ Add to `clients` in `circuless-cloud/deploy/keycloak/realm-config.json`, modelle
 }
 ```
 
-Two fields decide the security of this integration, and both are judgement calls:
+Two fields decide the security of this integration:
 
 | field | what turns on it |
 |---|---|
-| `org_id` | the organisation the node decides *against*. Set it to the partner's own org and the DPP needs an agreement, and the access log names them as a third party. Set it to `bvr` and there is no agreement to revoke. |
-| `audiences` | `all` lets `svc-dpp` mint a token for any node. Narrowing it to the one node the adapter sits on is the stronger setting and costs nothing here, since the DPP calls exactly one node. |
+| `org_id` | the organisation the node decides *against*. The partner's own org means an agreement is required and the access log names them as a third party; `bvr` means there is no agreement to revoke. |
+| `audiences` | `all` lets `svc-dpp` mint a token for any node. Narrowing it to the one node costs nothing, since the DPP calls exactly one. |
 
 Note what is **absent**: `standard.token.exchange.enabled`. The DPP acts only as itself —
 it has no person to act for — and withholding exchange means it can never acquire one.
 
-Then:
+Then `kc.py apply --url https://auth.<your-domain>`.
 
-```sh
-CIRCULESS_KEYCLOAK_ADMIN_PASSWORD=... \
-  python3 deploy/keycloak/scripts/kc.py apply --url $KEYCLOAK
-```
-
-## 1.2 Register the partner's certificate
-
-The DPP sends a certificate (step 3.1). It is not confidential; any channel is fine.
-
-```sh
-CIRCULESS_KEYCLOAK_ADMIN_PASSWORD=... \
-  python3 deploy/keycloak/scripts/kc.py register-cert \
-    --client svc-dpp --cert dpp.pem.crt --url $KEYCLOAK
-```
-
-**No client secret is issued, in either direction.** That is `private_key_jwt` (D18) — the
-same arrangement every node and every service here uses.
-
----
-
-# Part 2 — the organisation running the adapter
-
-## 2.1 Run the adapter beside the node
-
-[`../add-your-service`](../add-your-service) is the pattern. The adapter gets **no host
-port**: nothing but the node can reach it, which is why it may trust the `X-CIRCULess-*`
-headers at all.
-
-## 2.2 Register it as a service resource
-
-```sh
-curl -sX POST https://$NODE_HOST/v1/t/$TENANT/resources \
-  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-  -d '{"slug":"dpp-adapter","kind":"service","title":"DPP Adapter",
-       "theme":"processing","classification":"non-sensitive",
-       "endpoint_url":"http://dpp-adapter:8000/v1",
-       "invoke_policy":{"idempotent_methods":["GET","POST"],"timeout_s":30}}'
-```
-
-Keep the `id` from the response — that is `$RESOURCE`, and the DPP needs it.
-
-- `endpoint_url` carries the `/v1`, so the adapter's own paths stay as it publishes them.
-- `idempotent_methods` is an **allowlist of methods, not a retry list** — the node never
-  retries. `GET, POST` is all this adapter needs; leaving `PUT` and `DELETE` out means a
-  caller cannot reach them even by guessing a path.
-- Loopback, `0.0.0.0` and link-local are refused at registration and again on every call.
-  A container name on the node's private network is the intended shape.
-
-## 2.3 Give the node the adapter's key
-
-If the adapter checks a shared key — it should, as defence in depth behind the network
-boundary:
-
-```sh
-curl -sX PUT https://$NODE_HOST/v1/t/$TENANT/resources/$RESOURCE/credential \
-  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-  -d '{"scheme":"header","header_name":"X-API-Key","secret":"<the adapter's key>"}'
-```
-
-Stored encrypted, returned by no interface afterwards (invariant 11). To change it, set a
-new one.
-
-## 2.4 Permit the DPP
-
-With `org_id: dpp`, an agreement is required: in the console, from `bvr` to `dpp`, on this
-resource, action **`invoke`**. An agreement granting `read` instead refuses the call with
-`no_agreement` — which reads like no agreement at all rather than like the wrong action.
-
-With `org_id: bvr` and the resource at visibility `org`, membership alone permits it and
-no agreement exists. Convenient, and worth being deliberate about: there is then nothing
-to revoke.
-
----
-
-# Part 3 — the DPP partner
-
-This is the part to hand over. It needs three values from you: `$ISSUER`, `$NODE_HOST`,
-and the `$RESOURCE` uuid.
-
-## 3.1 Generate a keypair, once
+## 3.2 The DPP generates a keypair, once
 
 ```sh
 uv run act.py keypair --client svc-dpp --key dpp.pem > dpp.pem.crt
@@ -174,9 +204,16 @@ uv run act.py keypair --client svc-dpp --key dpp.pem > dpp.pem.crt
 ([`../acting-for-a-user/act.py`](../acting-for-a-user/act.py))
 
 The private key is written `0600` and **never leaves the machine**. Send `dpp.pem.crt` to
-the platform operator. Nothing sent is secret.
+the operator; nothing in it is secret. They register it:
 
-## 3.2 Mint a token, per call
+```sh
+kc.py register-cert --client svc-dpp --cert dpp.pem.crt --url https://auth.<your-domain>
+```
+
+**No client secret is issued, in either direction.** That is `private_key_jwt` (D18) — the
+same arrangement every node and service here uses.
+
+## 3.3 The DPP mints a token, per call
 
 A JWT signed with that key, presented as a client assertion:
 
@@ -202,26 +239,22 @@ the DPP is written in.
 
 Three rules that are not negotiable:
 
-- **One audience per token.** A token carrying two is replayable between the two systems
-  that accept it, and every API here rejects it. `scope` names exactly one node.
+- **One audience per token.** A token carrying two is replayable between the systems that
+  accept it, and every API here rejects it. `scope` names exactly one node.
 - **The assertion's `aud` is the token endpoint, not the node.** Getting this wrong
   produces `invalid_client`, which reads like an unregistered certificate and sends you
   looking in the wrong place.
 - **Access tokens last five minutes.** Mint per call, or cache with a margin.
 
-## 3.3 Push an event
+## 3.4 The DPP pushes an event
 
 ```sh
 curl -sX POST https://$NODE_HOST/v1/t/$TENANT/resources/$RESOURCE/invoke/events \
   -H "Authorization: Bearer $ACCESS_TOKEN" \
   -H 'Content-Type: application/json' \
-  -H "Idempotency-Key: $(uuidgen)" \
-  -d '{"type":"dpp.updated","id":"...","occurred_at":"2026-11-15T10:00:00Z","payload":{}}'
+  -d '{"id":"dpp-evt-0001","type":"dpp.invoice.updated",
+       "occurred_at":"2026-11-15T10:00:00Z","payload":{}}'
 ```
-
-`Idempotency-Key` is one of the four headers forwarded verbatim, so the adapter can
-deduplicate a retry. **The node never retries** — a dropped connection is a failure
-reported to you — so the retry is yours to make, and the key is what keeps it safe.
 
 With `act.py` instead of curl:
 
@@ -241,14 +274,50 @@ working, that is the first thing to look at.
 
 ---
 
+## The event
+
+Identical on both paths.
+
+```json
+{
+  "id":          "dpp-evt-0001",
+  "type":        "dpp.invoice.updated",
+  "occurred_at": "2026-11-15T10:00:00Z",
+  "payload":     { }
+}
+```
+
+All four fields are required; `payload` may be `{}` but not absent. `id` and `type` are
+1–200 characters. **Unknown fields are refused, not ignored** — a typo or a version
+mismatch, either way worth hearing about rather than storing an event missing something
+the sender believed it had sent.
+
+`occurred_at` **must carry a timezone**. A naive timestamp is refused, because it would
+otherwise be read in the server's zone and the same string sent from two places would mean
+two different instants with nothing to complain about it.
+
+| outcome | status | body |
+|---|---|---|
+| stored | `202` | `{"id": "<ours>", "duplicate": false}` |
+| already held | `200` | `{"id": "<the original>", "duplicate": true}` |
+
+**Deduplication is on `id`** — the DPP's own — and on nothing else. A repeat of an id
+already held is not an error and creates no second event: the DPP retrying an uncertain
+delivery is correct behaviour, and the node never retries on its behalf, so that retry is
+the DPP's to make.
+
+`Idempotency-Key` is accepted on both paths and recorded in the adapter's audit trail, but
+it **does not govern deduplication**. Two pushes with the same key and different `id`s are
+two events; two pushes with the same `id` and different keys are one.
+
 ## What the adapter sees
 
-The DPP's `Authorization` header **never reaches the adapter**. The node strips it, strips
-any inbound `X-CIRCULess-*`, and asserts its own (invariant 10):
+On path B the DPP's `Authorization` header **never reaches the adapter**. The node strips
+it, strips any inbound `X-CIRCULess-*`, and asserts its own (invariant 10):
 
 | header | |
 |---|---|
-| `X-API-Key` | the credential from 2.3, in whatever scheme was registered |
+| `X-API-Key` | the credential from 1.3 |
 | `X-CIRCULess-Subject` | stable pseudonymous id of the caller |
 | `X-CIRCULess-Org` | the organisation they acted as |
 | `X-CIRCULess-Resource` | the adapter's own registration id |
@@ -258,26 +327,45 @@ any inbound `X-CIRCULess-*`, and asserts its own (invariant 10):
 Forwarded from the caller: `Content-Type`, `Accept`, `Content-Length`, `Idempotency-Key`.
 Nothing else. There is no name and no email anywhere in this (D31).
 
-**The adapter must police push against read itself.** The node's decision is per resource
-and per action, not per path or per method: a caller the agreement permits to `invoke` may
-call *any* path on the adapter with any allowed verb. So if the same registration both
-accepts events and serves them to Workflows, it is the adapter that must decide `svc-dpp`
-may `POST events` and not `GET feed`, from `X-CIRCULess-Actor` and `X-CIRCULess-Org`.
-Two separate registrations, one per direction, move that line back onto the agreement —
-which is where it belongs if the two sides are different organisations.
+**On path A none of that applies.** There is no node in front of that port to strip what a
+caller sent, so the adapter believes nothing the request says about its identity: an event
+arriving there is recorded with no actor, no subject and no organisation, however many
+`X-CIRCULess-*` headers it carried.
 
 ## When it is refused
 
-| status | body `reason` | what it is |
+**Path A**, from the adapter:
+
+| status | `reason` | |
 |---|---|---|
-| 401 | `invalid_token` | expired, signed by an unregistered key, or an `aud` that is not exactly `node:$NODE_ID` — including one that carries a second audience |
+| 401 | `invalid_token` | missing, malformed or wrong bearer. One answer for every variety, deliberately |
+| 413 | `payload_too_large` | over the adapter's body limit |
+| 422 | `invalid_request` | the body could not be read — see the contract above |
+
+**Path B**, from the node before the adapter is reached:
+
+| status | `reason` | |
+|---|---|---|
+| 401 | `invalid_token` | wrong `aud`, expired, more than one audience, or an unregistered key |
 | 403 | `node_principal_not_permitted` | a node's token was used. Nodes consume nothing (D14) |
 | 403 | `no_agreement` | no agreement permits this org — **or one exists for the wrong action** |
 | 403 | `not_permitted` | visibility, not agreements: the resource is `org` or `private` and the caller is outside |
 | 404 | `not_found` | wrong tenant or resource id; also what a caller sees for a resource they may not know exists |
 | 405 | `unsupported` | the method is not in `idempotent_methods` |
 | 413 | `payload_too_large` | over `max_request_bytes`, default 10 MiB |
-| 502/504 | `upstream_error` / `upstream_timeout` | the adapter failed or exceeded `timeout_s` |
+| 502 / 504 | `upstream_error` / `upstream_timeout` | the adapter failed or exceeded `timeout_s` |
 
-A correctly minted first token answering `403 no_agreement` is the system working, not a
-token problem. Check 2.4 before re-reading part 3.
+and then, from the adapter itself:
+
+| status | `reason` | |
+|---|---|---|
+| 401 | `invalid_token` | the node's `X-API-Key` did not match. **A deployment fault, not the caller's** — step 1.3 |
+| 403 | `actor_not_permitted` | the token is good and the agreement holds, but this actor is not in `DPP_ADAPTER_PUBLISHERS` — step 1.4 |
+| 422 | `invalid_request` | as path A |
+
+Note that `413` on path B comes from the **node**, not the adapter: the adapter's own body
+limit guards the published port, which has no node in front of it to apply
+`max_request_bytes`.
+
+A correctly minted first token answering `403` is the system working, not a token problem.
+`no_agreement` sends you to step 1.4's first half; `actor_not_permitted` to its second.

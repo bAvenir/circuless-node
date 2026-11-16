@@ -234,6 +234,11 @@ identity provider, and prints the claims of every token so you can see what the 
 will see. The exchanged token keeps the person as `sub` and adds your application as
 `azp`; your own `principal_type` and `org_id` do **not** travel with it (D17).
 
+[`examples/dpp-events`](examples/dpp-events) is pattern B end to end for one real
+integration — registering the service, declaring the client, minting the token and making
+the call — including the interim path a partner uses before their client exists in the
+realm.
+
 ### Tokens and audiences
 
 A token is valid for **exactly one** audience. The platform rejects a token carrying more
