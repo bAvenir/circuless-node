@@ -200,6 +200,69 @@ def test_the_node_container_shares_the_agents_namespace() -> None:
     assert document["services"]["node"]["network_mode"] == "service:netbird"
 
 
+def test_the_compose_file_forwards_the_browser_facing_address() -> None:
+    """`CIRCULESS_NODE_GATEWAY_BASE_URL` has to reach the container, or it cannot be set.
+
+    It was missing for the life of this file. The setting existed, `sync` read it, the
+    deployment guide never mentioned it and the compose file never passed it — so an
+    operator who put it in `.env` changed nothing, and every catalogue record this node
+    published carried its overlay address. A browser cannot follow that, which is how a
+    console download or an API contract fails for a consumer with nothing wrong on the
+    node's own machine.
+
+    Asserted against the file, like the port and namespace checks above, so it fails in
+    CI on a machine with no Docker.
+    """
+    import pathlib
+
+    import yaml
+
+    compose = pathlib.Path(__file__).resolve().parent.parent / "deploy" / "docker-compose.yml"
+    environment = yaml.safe_load(compose.read_text())["services"]["node"]["environment"]
+
+    # Vacuity guard: an empty or renamed environment block would satisfy a bare `in`
+    # check against nothing, and the settings below are the ones already known good.
+    for required in ("CIRCULESS_NODE_NODE_ID", "CIRCULESS_NODE_CORS_ALLOW_ORIGINS"):
+        assert required in environment, f"{required} is no longer passed"
+
+    assert "CIRCULESS_NODE_GATEWAY_BASE_URL" in environment, (
+        "deploy/docker-compose.yml does not pass CIRCULESS_NODE_GATEWAY_BASE_URL, so a "
+        "deployment cannot set where a browser reaches this node, and the catalogue "
+        "publishes the overlay address instead."
+    )
+    # Forwarded from the environment rather than written into the file: the value differs
+    # per node, and a literal here would be one node's address on every node.
+    assert "${CIRCULESS_NODE_GATEWAY_BASE_URL" in environment["CIRCULESS_NODE_GATEWAY_BASE_URL"]
+
+
+def test_the_env_example_shows_the_browser_facing_address() -> None:
+    """The example is what an operator copies, so a setting absent from it is a setting
+    most deployments will not have. This one is the difference between a catalogue
+    anyone can follow and one only the overlay can."""
+    import pathlib
+
+    example = pathlib.Path(__file__).resolve().parent.parent / "deploy" / ".env.example"
+    # Parsed into settings rather than searched as text. Searching the whole file let a
+    # mutation that pointed the example at an overlay address survive, because the
+    # comment above the line still spelled the gateway host — the assertion was reading
+    # the prose, not the value.
+    settings = dict(
+        line.split("=", 1)
+        for line in example.read_text().splitlines()
+        if "=" in line and not line.lstrip().startswith("#")
+    )
+
+    assert "CIRCULESS_NODE_CORS_ALLOW_ORIGINS" in settings  # vacuity guard
+    assert "CIRCULESS_NODE_GATEWAY_BASE_URL" in settings
+
+    # The gateway host, not an overlay address. The two point in opposite directions and
+    # confusing them is the mistake this setting invites: an operator who copies an
+    # overlay address here publishes a catalogue only the overlay can follow.
+    value = settings["CIRCULESS_NODE_GATEWAY_BASE_URL"]
+    assert value.startswith("https://"), value
+    assert value.endswith(".nodes.circuless.bavenir.eu"), value
+
+
 def test_no_identifier_is_a_sequential_integer() -> None:
     """Invariant 16, as a test rather than a habit.
 

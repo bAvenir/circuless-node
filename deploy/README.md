@@ -182,6 +182,14 @@ from it are worth knowing on this side:
 what step 5 below prints. Not a public hostname. The gateway reaches you over the
 overlay and terminates TLS itself, so this hop is plain HTTP inside WireGuard (D28).
 
+**`CIRCULESS_NODE_GATEWAY_BASE_URL` is the other half of that**, and it points the
+opposite way: not where the gateway finds you, but where a *browser* finds you through
+the gateway — `https://<your node id>.nodes.circuless.bavenir.eu`. The catalogue records
+this node publishes carry it, so a consumer's browser follows it to fetch a dataset or
+read a service's API contract. Leave it unset and those records carry your overlay
+address instead: correct for a peer on the overlay, unusable for everyone else, and the
+failure appears in the *consumer's* console rather than anywhere on this machine.
+
 **`CIRCULESS_NODE_CORS_ALLOW_ORIGINS` must contain `https://api.circuless.bavenir.eu`**,
 the management console's origin — the host alone, no path and no trailing slash. Get it
 wrong and browser downloads fail the CORS preflight before any token is checked, with a

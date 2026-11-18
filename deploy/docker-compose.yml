@@ -98,6 +98,20 @@ services:
       CIRCULESS_NODE_NODE_ID: ${CIRCULESS_NODE_ID:?set CIRCULESS_NODE_ID in .env}
       CIRCULESS_NODE_ISSUER: ${CIRCULESS_NODE_ISSUER:?set CIRCULESS_NODE_ISSUER in .env}
       CIRCULESS_NODE_CLOUD_API_URL: ${CIRCULESS_NODE_CLOUD_API_URL:?set CIRCULESS_NODE_CLOUD_API_URL in .env}
+      # Where a **browser** reaches this node: through the Cloud gateway, at
+      # `https://<node-id>.nodes.circuless.bavenir.eu`. Deterministic from the node id —
+      # `gateway_routes.gateway_host` in `circuless-cloud` builds the Traefik rule from
+      # the same pattern, so the two must agree and nothing checks that they do.
+      #
+      # **Not the address in the node registry.** That one points the other way: it is
+      # where the gateway reaches *this* node, over the overlay, and it is the overlay
+      # address. Putting the gateway URL there makes the gateway proxy to itself, which
+      # `gateway_routes.refuse_loops` exists to catch.
+      #
+      # Unset, the catalogue publishes the overlay address instead — correct for a
+      # client on the overlay, unreachable for everyone else, and the reason the
+      # console cannot fetch anything from a node that has not set this.
+      CIRCULESS_NODE_GATEWAY_BASE_URL: ${CIRCULESS_NODE_GATEWAY_BASE_URL:-}
       # A JSON list, and never `*` — the node refuses to start on a wildcard (G7).
       # Empty string is not a list: pydantic-settings JSON-decodes this field, so the
       # default has to be `[]` rather than blank.
