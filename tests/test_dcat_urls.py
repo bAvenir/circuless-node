@@ -30,8 +30,12 @@ import pytest
 from circuless_node.app import create_public_app
 from circuless_node.dcat import (
     IDENTIFIER_BASE,
+    OPENAPI_DOCUMENT,
+    TERM_BASE,
+    THEME_BASE,
     access_url,
     invoke_url,
+    openapi_url,
     render,
     resource_uri,
 )
@@ -186,6 +190,131 @@ def test_the_endpoint_url_points_at_one_too(served: set[str]) -> None:
     assert any(route.startswith(wildcarded(path)) for route in served), path
 
 
+# --- the JSON-LD context declares what the record uses -----------------------------------
+
+
+def prefixes_used(node: object) -> set[str]:
+    """Every `prefix:term` the record spells, as a key or as an `@type`."""
+    found: set[str] = set()
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key == "@context":
+                continue
+            if ":" in key and not key.startswith("@"):
+                found.add(key.split(":", 1)[0])
+            if key == "@type" and isinstance(value, str) and ":" in value:
+                found.add(value.split(":", 1)[0])
+            found |= prefixes_used(value)
+    elif isinstance(node, list):
+        for item in node:
+            found |= prefixes_used(item)
+    return found
+
+
+def test_the_context_declares_every_prefix_the_record_uses() -> None:
+    """The fault this replaces: `@context` declared `dcat` and `dct` while the record
+    emitted `circuless:discoverability`, `circuless:classification` and
+    `circuless:shape`.
+
+    An undeclared prefix is not a tolerated extension. A JSON-LD processor resolves it
+    against nothing and **drops the term**, so those three reached no consumer that
+    parsed the record rather than string-matching it — and nothing failed, which is why
+    it survived. Written against the record rather than against a list of prefixes, so a
+    fourth term added later is covered without anyone remembering this test."""
+    for resource in (dataset(), service()):
+        record = render(resource, node_id="n", tenant_slug="alpha", base_url=GATEWAY)
+        declared = set(record["@context"])
+        used = prefixes_used(record)
+
+        # Vacuity guard: a record using no prefixed names at all would satisfy the
+        # subset assertion below and prove nothing. This is the one that regressed.
+        assert "circuless" in used, "no project term in the record — the test is vacuous"
+        assert "dcat" in used
+        assert used <= declared, f"undeclared prefixes: {sorted(used - declared)}"
+
+
+def test_the_term_namespace_is_not_the_concept_namespace() -> None:
+    """`TERM_BASE` names properties; `THEME_BASE` names four value-chain phases.
+    Collapsing them would leave `circuless:value-chain` ambiguous between a property and
+    a phase, which is the distinction DCAT itself keeps."""
+    assert TERM_BASE.startswith("https://")
+    # A prefix has to end in a delimiter or `circuless:classification` concatenates into
+    # a different IRI than anyone intended.
+    assert TERM_BASE.endswith(("#", "/"))
+    assert not TERM_BASE.startswith(THEME_BASE)
+
+
+# --- the API contract --------------------------------------------------------------------
+
+
+def test_a_service_describes_its_contract_through_the_node() -> None:
+    """With no `openapi_ref`, the description is the node's own `/invoke/openapi.json`.
+
+    Through the node, not at the upstream: the contract is reached exactly as the
+    service is, under `decide()` and in the log. A service must serve the document at
+    `openapi.json` relative to the endpoint it registered, which is what lets the node
+    compose this without asking."""
+    record = render(service(), node_id="n", tenant_slug="beta", base_url=GATEWAY)
+
+    assert record["dcat:endpointDescription"] == openapi_url(GATEWAY, "beta", RESOURCE)
+    assert record["dcat:endpointDescription"] == f"{record['dcat:endpointURL']}/{OPENAPI_DOCUMENT}"
+
+
+def test_the_providers_own_document_wins_when_they_have_one() -> None:
+    """A provider who publishes a fetchable contract keeps it: theirs is reachable
+    without an agreement, and the node's is not."""
+    resource = service()
+    resource.openapi_ref = "https://beta.example/openapi.json"
+    record = render(resource, node_id="n", tenant_slug="beta", base_url=GATEWAY)
+
+    assert record["dcat:endpointDescription"] == "https://beta.example/openapi.json"
+
+
+def test_the_contract_url_is_absolute() -> None:
+    """DCAT-AP gives `endpointDescription` the range `rdfs:Resource` — an IRI. A path
+    relative to the endpoint would have been easier to store and is not conformant."""
+    record = render(service(), node_id="n", tenant_slug="beta", base_url=GATEWAY)
+    parsed = urlparse(record["dcat:endpointDescription"])
+
+    assert parsed.scheme and parsed.netloc
+
+
+def test_the_contract_url_points_at_a_route_this_node_serves(served: set[str]) -> None:
+    """The same check the other two URLs get. `/invoke/{upstream_path:path}` swallows
+    `openapi.json`, so this asserts the prefix is a real route rather than that the
+    whole path is one."""
+    record = render(service(), node_id="n", tenant_slug="beta", base_url=GATEWAY)
+    path = urlparse(record["dcat:endpointDescription"]).path
+
+    assert path.startswith("/v1/")
+    assert path.endswith(f"/invoke/{OPENAPI_DOCUMENT}")
+    invoke_base = wildcarded(path).rsplit("/", 1)[0]
+    assert any(route.startswith(invoke_base) for route in served), path
+
+
+def test_the_document_name_is_the_one_services_are_obliged_to_serve() -> None:
+    """Pinned as a literal, deliberately, and not against the constant.
+
+    Every other assertion in this section spells `OPENAPI_DOCUMENT`, so renaming its
+    value moves both sides of the comparison together and they all keep passing — a
+    mutation to `swagger.json` survived the first run of this suite for exactly that
+    reason. The value is a contract with every partner: it is written into the
+    integration requirements and each registered service serves its document at that
+    name, so it cannot move here without their services moving first."""
+    assert OPENAPI_DOCUMENT == "openapi.json"
+
+    record = render(service(), node_id="n", tenant_slug="beta", base_url=GATEWAY)
+    assert record["dcat:endpointDescription"].endswith("/invoke/openapi.json")
+
+
+def test_a_dataset_describes_no_endpoint() -> None:
+    """`endpointDescription` belongs to a `dcat:DataService`. A Dataset carrying one
+    would be invalid, and the composition runs in the service branch only."""
+    record = render(dataset(), node_id="n", tenant_slug="alpha", base_url=GATEWAY)
+
+    assert "dcat:endpointDescription" not in record
+
+
 # --- a node that is not published yet ------------------------------------------------------
 
 
@@ -205,6 +334,16 @@ def test_a_service_publishes_no_endpoint_either() -> None:
 
     assert "dcat:endpointURL" not in record
     assert "dcat:landingPage" not in record
+
+
+def test_a_service_describes_no_contract_without_an_address_either() -> None:
+    """Nothing to compose from. The honest record omits the key, exactly as it omits
+    `endpointURL` — a published IRI that resolves nowhere is worse than none, which is
+    the whole lesson of this file."""
+    record = render(service(), node_id="alpha-onprem", tenant_slug="alpha")
+
+    assert "dcat:endpointDescription" not in record
+    assert "dcat:endpointURL" not in record
 
 
 def test_what_does_not_depend_on_the_address_survives() -> None:

@@ -11,6 +11,12 @@ Two shapes, and the distinction is a review finding (R15):
 * a **service** is a `dcat:DataService` with `endpointURL` and `endpointDescription` —
   *not* a Dataset with a URL in it, which is what an earlier draft had.
 
+`endpointDescription` has two sources and the provider's wins: `openapi_ref` if they
+registered one, otherwise the node's own `/invoke/openapi.json`. The second is why a
+service must serve its contract at `openapi.json` relative to its registered endpoint —
+without that obligation the node would have to guess, and a published IRI that 404s is
+worse than an absent one.
+
 `dcat:landingPage` is **not published**, although R15 lists it. DCAT says a landing page
 is one you can navigate to, and this node has none to offer a consumer: its only
 per-resource page is in the admin UI under `/ui`, which the Cloud gateway does not route
@@ -43,6 +49,18 @@ from .vocabularies import LICENCES, ResourceKind
 #: The vocabulary namespace for `dcat:theme`. The four value-chain phases are a project
 #: vocabulary, so they get a project namespace rather than being bent into an EU one.
 THEME_BASE = "https://circuless.bavenir.eu/vocabulary/value-chain-phase"
+
+#: The namespace for the project's own **terms** — the properties DCAT-AP has no word
+#: for. `circuless:classification` resolves to `…/ns#classification`.
+#:
+#: **Separate from `THEME_BASE` deliberately.** That is a concept scheme: its IRIs name
+#: four value-chain phases. This one names properties. DCAT draws the same line — terms
+#: under `dcat#`, code lists elsewhere — and merging them would leave
+#: `circuless:value-chain` ambiguous between a property and a phase.
+#:
+#: **Do not move it once records are published.** A consumer that stored a record
+#: resolved these terms against this IRI; changing it renames every property they kept.
+TERM_BASE = "https://circuless.bavenir.eu/ns#"
 
 #: The namespace for resource identifiers. The same project namespace as `THEME_BASE`,
 #: and for the same reason: these are names the project mints, not addresses anything
@@ -100,6 +118,28 @@ def invoke_url(base_url: str, tenant_slug: str, resource_id) -> str:  # noqa: AN
     return f"{base_url.rstrip('/')}{resource_path(tenant_slug, resource_id)}/invoke"
 
 
+#: Where a service serves its own OpenAPI document, **relative to the `endpoint_url` it
+#: registered**. An obligation on every registered service rather than a convention, so
+#: that the node can compose the description without asking — see the integration
+#: requirements. The DPP adapter already satisfies it: it registers `…:8000/v1` and
+#: serves `/v1/openapi.json`, so the document sits at `openapi.json` relative to its
+#: endpoint. A fixed `/api/v1/openapi.json` would not have, which is why the rule is
+#: relative to the registration and not to the service's root.
+OPENAPI_DOCUMENT = "openapi.json"
+
+
+def openapi_url(base_url: str, tenant_slug: str, resource_id) -> str:  # noqa: ANN001
+    """Where a consumer fetches the service's API contract, through the node.
+
+    `endpointURL` plus the document, so the contract is reached exactly as the service
+    is: through `/invoke`, under `decide()`, with the upstream credential injected and
+    the call logged. A provider whose document is publicly fetchable overrides this with
+    `openapi_ref`; most cannot, because the document sits behind the same network the
+    service does.
+    """
+    return f"{invoke_url(base_url, tenant_slug, resource_id)}/{OPENAPI_DOCUMENT}"
+
+
 def render(
     resource: Resource, *, node_id: str, tenant_slug: str, base_url: str | None = None
 ) -> dict[str, Any]:
@@ -120,6 +160,13 @@ def render(
     reachable_at = base_url.rstrip("/") if base_url else None
     record: dict[str, Any] = {
         "@context": {
+            # Until 18 Nov 2026 this declared `dcat` and `dct` only, while the record
+            # emitted `circuless:discoverability`, `circuless:classification` and
+            # `circuless:shape`. An undeclared prefix is not a tolerated extension: a
+            # JSON-LD processor resolves it against nothing and **drops the term**. All
+            # three were invisible to every consumer that parsed the record rather than
+            # string-matching it.
+            "circuless": TERM_BASE,
             "dcat": "http://www.w3.org/ns/dcat#",
             "dct": "http://purl.org/dc/terms/",
         },
@@ -157,9 +204,22 @@ def render(
             # The node's /invoke path, never `resource.endpoint_url` — see the module
             # docstring.
             record["dcat:endpointURL"] = invoke_url(reachable_at, tenant_slug, resource.id)
-        # Independent of the node's address: it is the provider's own document.
-        if resource.openapi_ref:
-            record["dcat:endpointDescription"] = resource.openapi_ref
+        # DCAT-AP: an IRI to a machine-readable description of the operations and
+        # parameters. Its range is `rdfs:Resource`, so it must be absolute and
+        # dereferenceable — which rules out a path relative to the endpoint, however
+        # convenient that would have been to store.
+        #
+        # The provider's own document wins when they have published one somewhere a
+        # consumer can reach. Otherwise the node's own, which every service can answer
+        # because serving `openapi.json` at its registered endpoint is an obligation.
+        # With no address there is no absolute IRI to offer, and the key is omitted for
+        # the same reason `endpointURL` is: a record that says nothing beats one that
+        # sends a reader somewhere nothing answers.
+        description = resource.openapi_ref or (
+            openapi_url(reachable_at, tenant_slug, resource.id) if reachable_at else None
+        )
+        if description:
+            record["dcat:endpointDescription"] = description
 
     return record
 
