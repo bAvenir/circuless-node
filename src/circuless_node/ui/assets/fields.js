@@ -69,7 +69,11 @@ export const FIELDS = [
   { name: "endpoint_url", label: "Upstream endpoint", type: "text", kinds: ["service"],
     required: true,
     hint: "Where the node forwards invocations. Never published to the catalogue." },
-  { name: "openapi_ref", label: "OpenAPI reference", type: "text", kinds: ["service"] },
+  { name: "openapi_ref", label: "OpenAPI reference", type: "text", kinds: ["service"],
+    hint: "Optional, and an absolute URL if given. Leave empty and the catalogue points at " +
+          "this node's own /invoke/openapi.json, which the service serves relative to its " +
+          "endpoint. Fill it only when the document is published somewhere consumers can " +
+          "already reach." },
   { name: "invoke_policy", label: "Invoke policy", type: "json", kinds: ["service"],
     hint: "JSON. Leave empty for the node's defaults." },
 ];

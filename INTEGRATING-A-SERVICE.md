@@ -148,6 +148,35 @@ network.
 
 A hostname is re-resolved on every call, so moving your service needs no re-registration.
 
+### Your API contract
+
+**Serve your OpenAPI document at `openapi.json`, relative to the endpoint you
+registered.** That is the whole requirement, and most services already meet it.
+
+| registered `endpoint_url` | serve the document at |
+|---|---|
+| `https://svc.internal/api/v1` | `https://svc.internal/api/v1/openapi.json` |
+| `https://svc.internal` | `https://svc.internal/openapi.json` |
+
+The node publishes that address in the catalogue as `dcat:endpointDescription`, built
+from your endpoint and the resource id, so a consumer deciding whether to ask for access
+can read what your service offers before they ask. Reading it is an ordinary call
+through the node — decided by the agreement and written to the access log like any
+other, which is why a consumer with no agreement is refused it.
+
+**Relative to your endpoint, rather than a fixed path**, because the endpoint is what
+varies. If yours already carries a version, a fixed `/api/v1/openapi.json` would land at
+`/api/v1/api/v1/openapi.json`; relative to what you registered, both shapes work.
+
+Two consequences worth knowing:
+
+- **Keep `GET` in `idempotent_methods`.** It is there by default. Narrowing the list to
+  `POST` alone also takes the contract away, and the address stays published.
+- **If you already publish your document somewhere a consumer can reach**, register that
+  absolute URL as `openapi_ref` and the node publishes yours instead of composing one.
+  Useful when the document is public anyway; most services' are not, and the node's own
+  route is the one that works without opening anything.
+
 ### `invoke_policy`
 
 | field | default | |
