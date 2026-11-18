@@ -177,6 +177,14 @@ Two consequences worth knowing:
   Useful when the document is public anyway; most services' are not, and the node's own
   route is the one that works without opening anything.
 
+    **Never point it at a node.** `openapi_ref` is for a document the node is not needed
+    to reach. An address under `…nodes.circuless.bavenir.eu` is at best the one the node
+    would have composed for you — and pinned, so it goes stale when that node's public
+    address changes. At worst it is a character off, and a reader's tool sends its
+    node-audienced token only to an address under the same record's `dcat:endpointURL`;
+    a mismatch is fetched without one and refused with `401 invalid_token`, which reads
+    like a permission problem and is not. Leave the field unset and the node composes it.
+
 ### `invoke_policy`
 
 | field | default | |
